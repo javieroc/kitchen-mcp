@@ -223,5 +223,57 @@ def calculate_recipe_cost(recipe_name: str) -> str:
         return f"Error calculating cost: {str(e)}"
 
 
+@mcp.tool()
+def update_stock(name: str, amount: float, mode: str = "set") -> str:
+    """
+    Updates the stock quantity for an ingredient.
+
+    Args:
+        name: Name of the ingredient.
+        amount: The quantity to add, subtract, or set.
+        mode: 'set' (default) to overwrite, 'add' to increase, 'reduce' to decrease.
+    """
+    try:
+        # Get current stock
+        res = supabase.table("ingredients").select("stock_quantity").eq("name", name).single().execute()
+        if not res.data:
+            return f"Ingredient '{name}' not found."
+        
+        current_stock = float(res.data["stock_quantity"])
+        
+        if mode == "add":
+            new_stock = current_stock + amount
+        elif mode == "reduce":
+            new_stock = current_stock - amount
+        else: # set
+            new_stock = amount
+
+        supabase.table("ingredients").update({"stock_quantity": new_stock}).eq("name", name).execute()
+        return f"Stock for {name} updated: {current_stock} -> {new_stock}."
+    except Exception as e:
+        return f"Error updating stock: {str(e)}"
+
+
+@mcp.tool()
+def get_inventory_report() -> str:
+    """
+    Returns a report of all ingredients and their current stock levels.
+    """
+    try:
+        res = supabase.table("ingredients").select("name, stock_quantity, unit_of_measure").order("name").execute()
+        if not res.data:
+            return "No ingredients found."
+
+        output = "**Current Kitchen Inventory:**\n"
+        for item in res.data:
+            qty = item['stock_quantity']
+            unit = item['unit_of_measure']
+            status = "🔴 LOW" if qty <= 0 else "🟢 OK"
+            output += f"- {status} **{item['name']}**: {qty} {unit}\n"
+        return output
+    except Exception as e:
+        return f"Error fetching inventory: {str(e)}"
+
+
 if __name__ == "__main__":
     mcp.run(transport="http", host="127.0.0.1", port=8000)

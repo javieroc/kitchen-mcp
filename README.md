@@ -62,7 +62,7 @@ SUPABASE_SERVICE_ROLE_KEY="your-supabase-service-role-key"
 Once you have configured your environment, you can start the server with the following command:
 
 ```sh
-uv run server.py
+uv run fastapi dev app/main.py
 ```
 
 The server will start on `http://127.0.0.1:8000` by default.
@@ -72,7 +72,7 @@ The server will start on `http://127.0.0.1:8000` by default.
 
 To use these tools directly within GitHub Copilot Chat or the Gemini extension in VS Code:
 
-Ensure the server is running `(uv run server.py)`.
+Ensure the server is running `(uv run fastapi dev app/main.py)`.
 
 In your project root, create a directory named .vscode if it doesn't exist.
 
