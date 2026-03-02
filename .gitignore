@@ -1,12 +1,37 @@
-# Python-generated files
+# Python bytecode and caches
 __pycache__/
-*.py[oc]
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Build artifacts
 build/
 dist/
 wheels/
-*.egg-info
+*.egg-info/
+.eggs/
 
 # Virtual environments
-.venv
+.venv/
+venv/
+ENV/
 
+# Environment files (local secrets)
 .env
+.env.local
+.env.*.local
+
+# Editors and OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Misc logs
+*.log

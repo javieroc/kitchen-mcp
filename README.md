@@ -67,6 +67,43 @@ uv run fastapi dev app/main.py
 
 The server will start on `http://127.0.0.1:8000` by default.
 
+### API server + MCP server
+
+This repository now has two runtimes:
+
+1. MCP server (`mcp_server/main.py`) that exposes Supabase tools.
+2. FastAPI server (`app/main.py`) with a single authenticated `POST /chat` endpoint.
+
+Run them on separate ports:
+
+```sh
+# Terminal 1
+uv run python mcp_server/main.py
+
+# Terminal 2
+uv run fastapi dev app/main.py --port 8001
+```
+
+Required environment variables:
+
+```env
+SUPABASE_URL="..."
+SUPABASE_SERVICE_ROLE_KEY="..."   # MCP server
+SUPABASE_ANON_KEY="..."           # FastAPI auth validation (preferred)
+MCP_SERVER_URL="http://127.0.0.1:8000/mcp"
+LLM_MODEL="gemini/gemini-2.5-flash"  # default, provider/model via LiteLLM format
+LLM_TEMPERATURE="0.2"                # optional
+GEMINI_API_KEY="..."                 # for Gemini models
+OPENAI_API_KEY="..."                 # for OpenAI models
+ANTHROPIC_API_KEY="..."              # for Anthropic models
+```
+
+To enable model-agnostic LLM formatting, install LiteLLM:
+
+```sh
+uv add litellm
+```
+
 
 ### 4. VS Code Integration
 

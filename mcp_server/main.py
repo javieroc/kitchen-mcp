@@ -22,7 +22,7 @@ def check_connection() -> str:
 
 
 @mcp.tool()
-def add_ingredient(name: str, unit: str, cost: float) -> str:
+def add_ingredient(name: str, unit: str, cost: float, user_id: str) -> str:
     """
     Adds a new ingredient to the kitchen catalog.
 
@@ -35,7 +35,8 @@ def add_ingredient(name: str, unit: str, cost: float) -> str:
         ingredient_data = {
             "name": name,
             "unit_of_measure": unit,
-            "cost_per_unit": cost
+            "cost_per_unit": cost,
+            "owner_id": user_id,
         }
 
         response = supabase.table("ingredients").insert(ingredient_data).execute()
@@ -47,25 +48,25 @@ def add_ingredient(name: str, unit: str, cost: float) -> str:
 
 
 @mcp.tool()
-def update_ingredient_price(name: str, new_cost: float) -> str:
+def update_ingredient_price(name: str, new_cost: float, user_id: str) -> str:
     """
     Updates the cost of an existing ingredient.
     All recipes using this ingredient will reflect the new price immediately.
     """
     try:
-        supabase.table("ingredients").update({"cost_per_unit": new_cost}).eq("name", name).execute()
+        supabase.table("ingredients").update({"cost_per_unit": new_cost}).eq("name", name).eq("owner_id", user_id).execute()
         return f"Updated {name} cost to ${new_cost}."
     except Exception as e:
         return f"Error updating price: {str(e)}"
 
 
 @mcp.tool()
-def list_available_recipes() -> str:
+def list_available_recipes(user_id: str) -> str:
     """
     Returns a list of all recipe names and descriptions in the database.
     """
     try:
-        res = supabase.table("recipes").select("name, description").execute()
+        res = supabase.table("recipes").select("name, description").eq("owner_id", user_id).execute()
         if not res.data:
             return "No recipes found in the database."
 
@@ -79,7 +80,7 @@ def list_available_recipes() -> str:
 
 
 @mcp.tool()
-def create_full_recipe(name: str, description: str, ingredients: list[dict]) -> str:
+def create_full_recipe(name: str, description: str, ingredients: list[dict], user_id: str) -> str:
     """
     Creates a new recipe and links multiple ingredients to it.
 
@@ -90,10 +91,13 @@ def create_full_recipe(name: str, description: str, ingredients: list[dict]) -> 
                      Example: [{"name": "00 Flour", "amount": 250}, {"name": "Water", "amount": 165}]
     """
     try:
-        recipe_res = supabase.table("recipes").insert({
-            "name": name,
-            "description": description
-        }).execute()
+        recipe_res = supabase.table("recipes").insert(
+            {
+                "name": name,
+                "description": description,
+                "owner_id": user_id,
+            }
+        ).execute()
         recipe_id = recipe_res.data[0]['id']
 
         links_created = 0
@@ -102,14 +106,24 @@ def create_full_recipe(name: str, description: str, ingredients: list[dict]) -> 
             ing_name = item['name']
             amount = item['amount']
 
-            ing_res = supabase.table("ingredients").select("id").eq("name", ing_name).single().execute()
+            ing_res = (
+                supabase.table("ingredients")
+                .select("id")
+                .eq("name", ing_name)
+                .eq("owner_id", user_id)
+                .single()
+                .execute()
+            )
 
             if ing_res.data:
-                supabase.table("recipe_ingredients").insert({
-                    "recipe_id": recipe_id,
-                    "ingredient_id": ing_res.data['id'],
-                    "quantity_used": amount
-                }).execute()
+                supabase.table("recipe_ingredients").insert(
+                    {
+                        "recipe_id": recipe_id,
+                        "ingredient_id": ing_res.data["id"],
+                        "quantity_used": amount,
+                        "owner_id": user_id,
+                    }
+                ).execute()
                 links_created += 1
 
         return f"Successfully created '{name}' with {links_created} ingredients linked."
@@ -119,7 +133,7 @@ def create_full_recipe(name: str, description: str, ingredients: list[dict]) -> 
 
 
 @mcp.tool()
-def get_recipe_ingredients(recipe_name: str) -> str:
+def get_recipe_ingredients(recipe_name: str, user_id: str) -> str:
     """
     Lists all ingredients and their quantities for a specific recipe.
     """
@@ -127,6 +141,7 @@ def get_recipe_ingredients(recipe_name: str) -> str:
         res = supabase.table("recipe_ingredients") \
             .select("quantity_used, ingredients(name, unit_of_measure), recipes!inner(name)") \
             .eq("recipes.name", recipe_name) \
+            .eq("owner_id", user_id) \
             .execute()
 
         if not res.data:
@@ -142,7 +157,7 @@ def get_recipe_ingredients(recipe_name: str) -> str:
 
 
 @mcp.tool()
-def scale_recipe(recipe_name: str, servings: int) -> str:
+def scale_recipe(recipe_name: str, servings: int, user_id: str) -> str:
     """
     Calculates the total weight and cost of ingredients needed for multiple servings.
     """
@@ -154,6 +169,7 @@ def scale_recipe(recipe_name: str, servings: int) -> str:
                 ingredients(name, unit_of_measure, cost_per_unit)
             """) \
             .eq("recipes.name", recipe_name) \
+            .eq("owner_id", user_id) \
             .execute()
 
         if not res.data:
@@ -181,7 +197,7 @@ def scale_recipe(recipe_name: str, servings: int) -> str:
 
 
 @mcp.tool()
-def calculate_recipe_cost(recipe_name: str) -> str:
+def calculate_recipe_cost(recipe_name: str, user_id: str) -> str:
     """
     Calculates the total production cost of a recipe by joining the
     recipe_ingredients, recipes, and ingredients tables.
@@ -194,6 +210,7 @@ def calculate_recipe_cost(recipe_name: str) -> str:
                 ingredients(name, cost_per_unit, unit_of_measure)
             """) \
             .eq("recipes.name", recipe_name) \
+            .eq("owner_id", user_id) \
             .execute()
 
         if not res.data:
@@ -224,7 +241,7 @@ def calculate_recipe_cost(recipe_name: str) -> str:
 
 
 @mcp.tool()
-def update_stock(name: str, amount: float, mode: str = "set") -> str:
+def update_stock(name: str, amount: float, user_id: str, mode: str = "set") -> str:
     """
     Updates the stock quantity for an ingredient.
 
@@ -235,7 +252,14 @@ def update_stock(name: str, amount: float, mode: str = "set") -> str:
     """
     try:
         # Get current stock
-        res = supabase.table("ingredients").select("stock_quantity").eq("name", name).single().execute()
+        res = (
+            supabase.table("ingredients")
+            .select("stock_quantity")
+            .eq("name", name)
+            .eq("owner_id", user_id)
+            .single()
+            .execute()
+        )
         if not res.data:
             return f"Ingredient '{name}' not found."
         
@@ -248,19 +272,19 @@ def update_stock(name: str, amount: float, mode: str = "set") -> str:
         else: # set
             new_stock = amount
 
-        supabase.table("ingredients").update({"stock_quantity": new_stock}).eq("name", name).execute()
+        supabase.table("ingredients").update({"stock_quantity": new_stock}).eq("name", name).eq("owner_id", user_id).execute()
         return f"Stock for {name} updated: {current_stock} -> {new_stock}."
     except Exception as e:
         return f"Error updating stock: {str(e)}"
 
 
 @mcp.tool()
-def get_inventory_report() -> str:
+def get_inventory_report(user_id: str) -> str:
     """
     Returns a report of all ingredients and their current stock levels.
     """
     try:
-        res = supabase.table("ingredients").select("name, stock_quantity, unit_of_measure").order("name").execute()
+        res = supabase.table("ingredients").select("name, stock_quantity, unit_of_measure").eq("owner_id", user_id).order("name").execute()
         if not res.data:
             return "No ingredients found."
 
