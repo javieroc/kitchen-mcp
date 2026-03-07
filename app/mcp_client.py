@@ -14,9 +14,12 @@ class MCPKitchenClient:
     def __init__(self, server_url: str | None = None) -> None:
         self.server_url = server_url or os.getenv("MCP_SERVER_URL", "http://127.0.0.1:8000/mcp")
 
+    def _client(self) -> Client:
+        return Client(self.server_url, timeout=30)
+
     async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> str:
         """Call a tool and return concatenated text content."""
-        async with Client(self.server_url, timeout=30) as client:
+        async with self._client() as client:
             result = await client.call_tool(tool_name, arguments, raise_on_error=False)
 
         if getattr(result, "isError", False):
@@ -28,3 +31,11 @@ class MCPKitchenClient:
             if text:
                 parts.append(text)
         return "\n".join(parts).strip() if parts else f"No textual output from tool {tool_name}."
+
+    async def health_check(self) -> bool:
+        """Return True if MCP server is reachable and can answer the connection tool."""
+        try:
+            response = await self.call_tool("check_connection", {})
+        except Exception:
+            return False
+        return bool(response and "failed" not in response.lower())

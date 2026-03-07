@@ -1,12 +1,19 @@
 import os
+import logging
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 from supabase import create_client, Client
+from starlette.responses import JSONResponse
 
 load_dotenv()
 
-url: str = os.getenv("SUPABASE_URL")
-key: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+logger = logging.getLogger(__name__)
+
+url = os.getenv("SUPABASE_URL")
+key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+if not url or not key:
+    raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be configured for MCP server.")
+
 supabase: Client = create_client(url, key)
 
 mcp = FastMCP("Kitchen_Orchestrator")
@@ -299,5 +306,13 @@ def get_inventory_report(user_id: str) -> str:
         return f"Error fetching inventory: {str(e)}"
 
 
+@mcp.custom_route("/health", methods=["GET"], include_in_schema=False)
+async def health_check(_request):
+    """Basic liveness endpoint for Railway/ops checks."""
+    return JSONResponse({"status": "healthy", "service": "kitchen-mcp"})
+
+
 if __name__ == "__main__":
-    mcp.run(transport="http", host="127.0.0.1", port=8000)
+    port = int(os.getenv("PORT", "8000"))
+    logger.info("Starting MCP server on 0.0.0.0:%s", port)
+    mcp.run(transport="http", host="0.0.0.0", port=port, path="/mcp")

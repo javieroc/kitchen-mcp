@@ -59,16 +59,6 @@ SUPABASE_SERVICE_ROLE_KEY="your-supabase-service-role-key"
 
 ## Running the Server
 
-Once you have configured your environment, you can start the server with the following command:
-
-```sh
-uv run fastapi dev app/main.py
-```
-
-The server will start on `http://127.0.0.1:8000` by default.
-
-### API server + MCP server
-
 This repository now has two runtimes:
 
 1. MCP server (`mcp_server/main.py`) that exposes Supabase tools.
@@ -81,7 +71,7 @@ Run them on separate ports:
 uv run python mcp_server/main.py
 
 # Terminal 2
-uv run fastapi dev app/main.py --port 8001
+PORT=8001 uv run uvicorn app.main:app --host 0.0.0.0 --port 8001
 ```
 
 Required environment variables:
@@ -98,18 +88,58 @@ OPENAI_API_KEY="..."                 # for OpenAI models
 ANTHROPIC_API_KEY="..."              # for Anthropic models
 ```
 
-To enable model-agnostic LLM formatting, install LiteLLM:
+Health endpoints:
+
+- FastAPI: `GET /health`
+- MCP server: `GET /health`
+
+## Railway Deployment (2 services)
+
+Deploy two Railway services from this same repository:
+
+1. `fastapi-api` (public)
+2. `mcp-server` (private/internal)
+
+### Service 1: `mcp-server` (private only)
+
+- Start command:
 
 ```sh
-uv add litellm
+uv run fastmcp run mcp_server/main.py:mcp --transport http --host 0.0.0.0 --port $PORT --path /mcp
 ```
+
+- Required env vars:
+  - `SUPABASE_URL`
+  - `SUPABASE_SERVICE_ROLE_KEY`
+
+- Do not expose a public domain for this service.
+
+### Service 2: `fastapi-api` (public)
+
+- Start command:
+
+```sh
+uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT
+```
+
+- Required env vars:
+  - `SUPABASE_URL`
+  - `SUPABASE_ANON_KEY`
+  - `MCP_SERVER_URL` set to the MCP private URL (for example `http://<mcp-private-host>:<mcp-port>/mcp`)
+  - `LLM_MODEL` and provider API key(s): `GEMINI_API_KEY` or `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`
+  - Optional: `LLM_TEMPERATURE`
+
+### Networking
+
+- FastAPI calls MCP over Railway private networking.
+- Keep FastAPI public and keep MCP private.
 
 
 ### 4. VS Code Integration
 
 To use these tools directly within GitHub Copilot Chat or the Gemini extension in VS Code:
 
-Ensure the server is running `(uv run fastapi dev app/main.py)`.
+Ensure MCP server is running (`uv run python mcp_server/main.py`).
 
 In your project root, create a directory named .vscode if it doesn't exist.
 

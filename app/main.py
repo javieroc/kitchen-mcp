@@ -1,4 +1,7 @@
 """FastAPI routes for Kitchen Orchestration."""
+import logging
+import os
+
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
@@ -9,6 +12,7 @@ from .models import ChatRequest, ChatResponse
 
 app = FastAPI(title="Kitchen Orchestrator API", version="0.1.0")
 mcp_client = MCPKitchenClient()
+logger = logging.getLogger(__name__)
 
 
 @app.get("/")
@@ -24,9 +28,12 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
+    mcp_ok = await mcp_client.health_check()
+    status = "healthy" if mcp_ok else "degraded"
     return JSONResponse({
-        "status": "healthy",
-        "service": "kitchen-orchestrator"
+        "status": status,
+        "service": "kitchen-orchestrator",
+        "mcp_reachable": mcp_ok,
     })
 
 
@@ -48,14 +55,17 @@ async def chat(
             tools_used=result.tools_used,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to process chat prompt: {exc}") from exc
+        logger.exception("Failed to process chat prompt")
+        raise HTTPException(status_code=500, detail="Failed to process chat prompt.") from exc
 
 
 if __name__ == "__main__":
     import uvicorn
+
+    port = int(os.getenv("PORT", "8001"))
     uvicorn.run(
         "app.main:app",
-        host="127.0.0.1",
-        port=8001,
-        reload=True
+        host="0.0.0.0",
+        port=port,
+        reload=False,
     )

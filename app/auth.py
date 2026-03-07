@@ -52,7 +52,7 @@ async def get_current_user(
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid auth token: {exc}",
+            detail="Invalid auth token",
         ) from exc
 
     if not user:
