@@ -1,4 +1,5 @@
 """FastAPI routes for Kitchen Orchestration."""
+from contextlib import asynccontextmanager
 import logging
 import os
 
@@ -10,9 +11,18 @@ from .auth import AuthenticatedUser, get_current_user
 from .mcp_client import MCPKitchenClient
 from .models import ChatRequest, ChatResponse
 
-app = FastAPI(title="Kitchen Orchestrator API", version="0.1.0")
 mcp_client = MCPKitchenClient()
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Log resolved runtime configuration needed for MCP connectivity."""
+    logger.warning("Using MCP_SERVER_URL=%s", mcp_client.server_url)
+    yield
+
+
+app = FastAPI(title="Kitchen Orchestrator API", version="0.1.0", lifespan=lifespan)
 
 
 @app.get("/")
@@ -23,13 +33,6 @@ async def root():
         "version": "0.1.0",
         "status": "running"
     })
-
-
-@app.on_event("startup")
-async def log_startup_configuration() -> None:
-    """Log resolved runtime configuration needed for MCP connectivity."""
-    logger.info("Using MCP_SERVER_URL=%s", mcp_client.server_url)
-
 
 @app.get("/health")
 async def health_check():
