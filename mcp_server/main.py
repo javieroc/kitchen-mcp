@@ -315,4 +315,5 @@ async def health_check(_request):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))
     logger.info("Starting MCP server on 0.0.0.0:%s", port)
+    logger.info("MCP server listening at http://0.0.0.0:%s/mcp", port)
     mcp.run(transport="http", host="0.0.0.0", port=port, path="/mcp")

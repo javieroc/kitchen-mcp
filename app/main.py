@@ -25,6 +25,12 @@ async def root():
     })
 
 
+@app.on_event("startup")
+async def log_startup_configuration() -> None:
+    """Log resolved runtime configuration needed for MCP connectivity."""
+    logger.info("Using MCP_SERVER_URL=%s", mcp_client.server_url)
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
