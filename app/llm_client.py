@@ -60,29 +60,8 @@ class LLMClient:
 
     async def suggest_substitutions(self, ingredient: str, user_prompt: str = "") -> str:
         """Generate substitution ideas for any ingredient."""
-        normalized = ingredient.strip().lower()
-        fallback_map: dict[str, list[str]] = {
-            "pasta": ["zucchini noodles", "spaghetti squash", "shirataki noodles", "rice noodles"],
-            "rice": ["quinoa", "cauliflower rice", "bulgur"],
-            "bread": ["lettuce wraps", "whole grain tortillas", "rice cakes"],
-            "cheese": ["nutritional yeast", "tofu ricotta", "cashew cream"],
-            "cream": ["greek yogurt", "coconut cream", "evaporated milk"],
-            "egg": ["1 tbsp flaxseed meal + 3 tbsp water", "1/4 cup unsweetened applesauce"],
-            "butter": ["same amount olive oil", "same amount coconut oil"],
-            "milk": ["same amount oat milk", "same amount almond milk"],
-            "sugar": ["same amount honey (reduce liquids)", "same amount maple syrup (reduce liquids)"],
-            "flour": ["1:1 gluten-free flour blend", "oat flour (for soft bakes)"],
-        }
-
-        for key, options in fallback_map.items():
-            if key in normalized:
-                return f"Substitutions for {ingredient}: {', '.join(options)}."
-
         if not HAS_LITELLM or not self._has_provider_credentials():
-            return (
-                f"Substitutions for {ingredient}: use an ingredient with similar function "
-                "(starch, protein, fat, or acidity) and test in small batches."
-            )
+            return f"I can't generate substitutions for {ingredient} right now because the language model is unavailable."
 
         messages: list[dict[str, Any]] = [
             {
@@ -114,10 +93,41 @@ class LLMClient:
         except Exception:
             pass
 
-        return (
-            f"Substitutions for {ingredient}: use an ingredient with similar function "
-            "(starch, protein, fat, or acidity) and test in small batches."
-        )
+        return f"I couldn't generate substitutions for {ingredient} right now. Please try again."
+
+    async def answer_general_kitchen_question(self, user_prompt: str, fallback_message: str) -> str:
+        """Answer general kitchen questions when no specialized tool route matches."""
+        if not HAS_LITELLM or not self._has_provider_credentials():
+            return fallback_message
+
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a helpful kitchen assistant. Answer the user's question directly with practical, "
+                    "concise guidance. If the request needs recipe-, inventory-, or cost-specific data that you "
+                    "do not have, be honest and offer the best general guidance you can."
+                ),
+            },
+            {
+                "role": "user",
+                "content": user_prompt,
+            },
+        ]
+
+        try:
+            response = await acompletion(  # type: ignore[misc]
+                model=self.model,
+                messages=messages,
+                temperature=self.temperature,
+            )
+            content = response.choices[0].message.content
+            if content and content.strip():
+                return content.strip()
+        except Exception:
+            pass
+
+        return fallback_message
 
     @staticmethod
     def _resolve_model() -> str:

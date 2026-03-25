@@ -16,15 +16,6 @@ class AgentResult:
     reply: str
     tools_used: list[str]
 
-
-SUBSTITUTIONS: dict[str, list[str]] = {
-    "egg": ["1 tbsp flaxseed meal + 3 tbsp water", "1/4 cup unsweetened applesauce"],
-    "butter": ["same amount olive oil", "same amount coconut oil"],
-    "milk": ["same amount oat milk", "same amount almond milk"],
-    "sugar": ["same amount honey (reduce liquids)", "same amount maple syrup (reduce liquids)"],
-    "flour": ["1:1 gluten-free flour blend", "oat flour (for soft bakes)"],
-}
-
 CONVERSIONS: dict[tuple[str, str], float] = {
     ("g", "kg"): 0.001,
     ("kg", "g"): 1000,
@@ -142,18 +133,10 @@ async def process_chat_prompt(prompt: str, user_id: str, mcp_client: MCPKitchenC
     if "substitut" in normalized:
         ingredient = _extract_substitution_ingredient(prompt)
         if not ingredient:
-            for key in SUBSTITUTIONS:
-                if key in normalized:
-                    ingredient = key
-                    break
-        if not ingredient:
             return AgentResult(
                 reply="Tell me which ingredient you need to replace, e.g. substitution for egg.",
                 tools_used=tools_used,
             )
-        if ingredient.lower() in SUBSTITUTIONS:
-            options = ", ".join(SUBSTITUTIONS[ingredient.lower()])
-            return AgentResult(reply=f"Substitutions for {ingredient}: {options}.", tools_used=tools_used)
 
         reply = await llm_client.suggest_substitutions(ingredient=ingredient, user_prompt=prompt)
         return AgentResult(reply=reply, tools_used=tools_used)
@@ -184,4 +167,5 @@ async def process_chat_prompt(prompt: str, user_id: str, mcp_client: MCPKitchenC
         "I can help with stock, recipe ingredients, recipe costs, scaling servings, unit conversions, and substitutions. "
         "Ask a kitchen question in one of these areas."
     )
-    return AgentResult(reply=fallback, tools_used=tools_used)
+    reply = await llm_client.answer_general_kitchen_question(prompt, fallback)
+    return AgentResult(reply=reply, tools_used=tools_used)

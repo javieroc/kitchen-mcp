@@ -1,10 +1,14 @@
 """FastAPI routes for Kitchen Orchestration."""
+import asyncio
 from contextlib import asynccontextmanager
 import logging
 import os
+import socket
+from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+import httpx
 
 from .agent import process_chat_prompt
 from .auth import AuthenticatedUser, get_current_user
@@ -15,10 +19,46 @@ mcp_client = MCPKitchenClient()
 logger = logging.getLogger(__name__)
 
 
+async def _log_mcp_connectivity_probe() -> None:
+    parsed = urlparse(mcp_client.server_url)
+    host = parsed.hostname
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    if not host:
+        logger.warning("MCP probe skipped: could not parse host from %s", mcp_client.server_url)
+        return
+
+    try:
+        addrinfo = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        addresses = sorted({item[4][0] for item in addrinfo})
+        logger.warning("MCP host %s resolved to %s", host, addresses)
+    except Exception as exc:
+        logger.warning("MCP DNS resolution failed for %s:%s: %s", host, port, exc)
+
+    writer = None
+    try:
+        _, writer = await asyncio.open_connection(host, port)
+        logger.warning("MCP TCP connection succeeded to %s:%s", host, port)
+    except Exception as exc:
+        logger.warning("MCP TCP connection failed to %s:%s: %s", host, port, exc)
+    finally:
+        if writer is not None:
+            writer.close()
+            await writer.wait_closed()
+
+    health_url = parsed._replace(path="/health", params="", query="", fragment="").geturl()
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(health_url)
+        logger.warning("MCP health probe %s returned %s", health_url, response.status_code)
+    except Exception as exc:
+        logger.warning("MCP health probe failed for %s: %s", health_url, exc)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Log resolved runtime configuration needed for MCP connectivity."""
     logger.warning("Using MCP_SERVER_URL=%s", mcp_client.server_url)
+    await _log_mcp_connectivity_probe()
     yield
 
 
