@@ -93,6 +93,13 @@ Health endpoints:
 - FastAPI: `GET /health`
 - MCP server: `GET /health`
 
+Conversation endpoints (authenticated):
+
+- `POST /chats` create a new chat thread
+- `GET /chats` list the user's chat threads
+- `GET /chats/{chat_id}` fetch one thread + full message history
+- `POST /chats/{chat_id}/messages` add user message, generate agent reply, and persist both
+
 ## Railway Deployment (2 services)
 
 Deploy two Railway services from this same repository:
