@@ -1,45 +1,42 @@
-"""FastAPI routes for Kitchen Orchestration."""
+"""FastAPI application factory for the Kitchen Orchestrator API."""
+
 import asyncio
-from contextlib import asynccontextmanager
 import logging
 import os
 import socket
+from contextlib import asynccontextmanager
 from urllib.parse import urlparse
-from uuid import UUID
 
-from fastapi import Depends, FastAPI, HTTPException, status
-from fastapi.responses import JSONResponse
 import httpx
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 
 from .agent import process_chat_prompt
 from .auth import AuthenticatedUser, get_current_user
-from .chat_store import ChatStore
 from .mcp_client import MCPKitchenClient
-from .models import (
-    ChatMessage,
-    ChatRequest,
-    ChatResponse,
-    ChatThread,
-    ChatThreadWithMessages,
-    CreateChatRequest,
-    SendMessageRequest,
-    SendMessageResponse,
-)
+from .models import ChatRequest, ChatResponse
+from .routers import chats, recipes
 
-mcp_client = MCPKitchenClient()
 logger = logging.getLogger(__name__)
 
 
-async def _log_mcp_connectivity_probe() -> None:
-    parsed = urlparse(mcp_client.server_url)
+# ---------------------------------------------------------------------------
+# MCP connectivity probe (run at startup)
+# ---------------------------------------------------------------------------
+
+
+async def _log_mcp_connectivity_probe(server_url: str) -> None:
+    parsed = urlparse(server_url)
     host = parsed.hostname
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     if not host:
-        logger.warning("MCP probe skipped: could not parse host from %s", mcp_client.server_url)
+        logger.warning("MCP probe skipped: could not parse host from %s", server_url)
         return
 
     try:
-        addrinfo = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        addrinfo = await asyncio.get_running_loop().getaddrinfo(
+            host, port, type=socket.SOCK_STREAM
+        )
         addresses = sorted({item[4][0] for item in addrinfo})
         logger.warning("MCP host %s resolved to %s", host, addresses)
     except Exception as exc:
@@ -65,150 +62,55 @@ async def _log_mcp_connectivity_probe() -> None:
         logger.warning("MCP health probe failed for %s: %s", health_url, exc)
 
 
+# ---------------------------------------------------------------------------
+# Lifespan
+# ---------------------------------------------------------------------------
+
+
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
-    """Log resolved runtime configuration needed for MCP connectivity."""
+async def lifespan(app: FastAPI):
+    mcp_client = MCPKitchenClient()
+    app.state.mcp_client = mcp_client
     logger.warning("Using MCP_SERVER_URL=%s", mcp_client.server_url)
-    await _log_mcp_connectivity_probe()
+    await _log_mcp_connectivity_probe(mcp_client.server_url)
     yield
+
+
+# ---------------------------------------------------------------------------
+# App
+# ---------------------------------------------------------------------------
 
 
 app = FastAPI(title="Kitchen Orchestrator API", version="0.1.0", lifespan=lifespan)
 
+app.include_router(chats.router)
+app.include_router(recipes.router)
 
-def _to_chat_thread(row: dict) -> ChatThread:
-    return ChatThread.model_validate(row)
 
-
-def _to_chat_message(row: dict) -> ChatMessage:
-    return ChatMessage(
-        id=row["id"],
-        role=row["role"],
-        content=row["content"],
-        sequence_no=row["sequence_no"],
-        created_at=row["created_at"],
-        tools_used=row.get("tools_used") or [],
-    )
+# ---------------------------------------------------------------------------
+# Root / health / stateless chat
+# ---------------------------------------------------------------------------
 
 
 @app.get("/")
 async def root():
     """Welcome endpoint."""
-    return JSONResponse({
-        "message": "Kitchen Orchestrator API",
-        "version": "0.1.0",
-        "status": "running"
-    })
+    return JSONResponse(
+        {"message": "Kitchen Orchestrator API", "version": "0.1.0", "status": "running"}
+    )
+
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    mcp_ok = await mcp_client.health_check()
-    status = "healthy" if mcp_ok else "degraded"
-    return JSONResponse({
-        "status": status,
-        "service": "kitchen-orchestrator",
-        "mcp_reachable": mcp_ok,
-    })
-
-
-@app.post("/chats", response_model=ChatThread, status_code=status.HTTP_201_CREATED)
-async def create_chat(
-    payload: CreateChatRequest,
-    user: AuthenticatedUser = Depends(get_current_user),
-):
-    """Create a new chat thread for the authenticated user."""
-    try:
-        store = ChatStore(user.access_token)
-        thread = store.create_thread(user_id=user.user_id, title=payload.title)
-        return _to_chat_thread(thread)
-    except Exception as exc:
-        logger.exception("Failed to create chat thread")
-        raise HTTPException(status_code=500, detail="Failed to create chat thread.") from exc
-
-
-@app.get("/chats", response_model=list[ChatThread])
-async def list_chats(
-    user: AuthenticatedUser = Depends(get_current_user),
-):
-    """List chat threads for the authenticated user."""
-    try:
-        store = ChatStore(user.access_token)
-        rows = store.list_threads(user_id=user.user_id)
-        return [_to_chat_thread(row) for row in rows]
-    except Exception as exc:
-        logger.exception("Failed to list chat threads")
-        raise HTTPException(status_code=500, detail="Failed to list chats.") from exc
-
-
-@app.get("/chats/{chat_id}", response_model=ChatThreadWithMessages)
-async def get_chat(
-    chat_id: UUID,
-    user: AuthenticatedUser = Depends(get_current_user),
-):
-    """Fetch one chat thread and all messages for the authenticated user."""
-    try:
-        store = ChatStore(user.access_token)
-        thread = store.get_thread(thread_id=chat_id, user_id=user.user_id)
-        if not thread:
-            raise HTTPException(status_code=404, detail="Chat not found.")
-        messages = store.get_messages(thread_id=chat_id, user_id=user.user_id)
-        return ChatThreadWithMessages(
-            thread=_to_chat_thread(thread),
-            messages=[_to_chat_message(row) for row in messages],
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Failed to fetch chat thread")
-        raise HTTPException(status_code=500, detail="Failed to fetch chat.") from exc
-
-
-@app.post("/chats/{chat_id}/messages", response_model=SendMessageResponse)
-async def send_chat_message(
-    chat_id: UUID,
-    payload: SendMessageRequest,
-    user: AuthenticatedUser = Depends(get_current_user),
-):
-    """Append user message, run agent, and persist assistant response."""
-    try:
-        store = ChatStore(user.access_token)
-        thread = store.get_thread(thread_id=chat_id, user_id=user.user_id)
-        if not thread:
-            raise HTTPException(status_code=404, detail="Chat not found.")
-
-        user_message = store.add_message(
-            thread_id=chat_id,
-            user_id=user.user_id,
-            role="user",
-            content=payload.message,
-        )
-        result = await process_chat_prompt(
-            prompt=payload.message,
-            user_id=user.user_id,
-            mcp_client=mcp_client,
-        )
-        assistant_message = store.add_message(
-            thread_id=chat_id,
-            user_id=user.user_id,
-            role="assistant",
-            content=result.reply,
-            tools_used=result.tools_used,
-        )
-        refreshed_thread = store.get_thread(thread_id=chat_id, user_id=user.user_id)
-        if not refreshed_thread:
-            raise HTTPException(status_code=404, detail="Chat not found.")
-
-        return SendMessageResponse(
-            thread=_to_chat_thread(refreshed_thread),
-            user_message=_to_chat_message(user_message),
-            assistant_message=_to_chat_message(assistant_message),
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Failed to process chat message")
-        raise HTTPException(status_code=500, detail="Failed to process chat message.") from exc
+    mcp_ok = await app.state.mcp_client.health_check()
+    return JSONResponse(
+        {
+            "status": "healthy" if mcp_ok else "degraded",
+            "service": "kitchen-orchestrator",
+            "mcp_reachable": mcp_ok,
+        }
+    )
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -216,12 +118,12 @@ async def chat(
     payload: ChatRequest,
     user: AuthenticatedUser = Depends(get_current_user),
 ):
-    """Process a chat prompt from the mobile app."""
+    """Stateless chat endpoint (no thread persistence)."""
     try:
         result = await process_chat_prompt(
             prompt=payload.message,
             user_id=user.user_id,
-            mcp_client=mcp_client,
+            mcp_client=app.state.mcp_client,
         )
         return ChatResponse(
             user_id=user.user_id,
@@ -233,13 +135,13 @@ async def chat(
         raise HTTPException(status_code=500, detail="Failed to process chat prompt.") from exc
 
 
+# ---------------------------------------------------------------------------
+# Entrypoint
+# ---------------------------------------------------------------------------
+
+
 if __name__ == "__main__":
     import uvicorn
 
     port = int(os.getenv("PORT", "8001"))
-    uvicorn.run(
-        "app.main:app",
-        host="0.0.0.0",
-        port=port,
-        reload=False,
-    )
+    uvicorn.run("app.main:app", host="0.0.0.0", port=port, reload=False)

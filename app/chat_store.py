@@ -2,29 +2,19 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 from uuid import UUID
 
-from supabase import Client, create_client
+from supabase import Client
 
-
-def _build_supabase_data_client(access_token: str) -> Client:
-    url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-    if not url or not key:
-        raise RuntimeError("SUPABASE_URL and SUPABASE_ANON_KEY (or service role key) must be configured.")
-
-    client = create_client(url, key)
-    client.postgrest.auth(access_token)
-    return client
+from .db import build_supabase_client
 
 
 class ChatStore:
     """Thin data access layer for chat entities."""
 
     def __init__(self, access_token: str):
-        self.client = _build_supabase_data_client(access_token)
+        self.client: Client = build_supabase_client(access_token)
 
     def create_thread(self, user_id: str, title: str | None = None) -> dict[str, Any]:
         payload: dict[str, Any] = {"owner_id": user_id}

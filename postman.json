@@ -1,0 +1,285 @@
+{
+  "info": {
+    "name": "Kitchen Orchestrator API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8001",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "YOUR_SUPABASE_JWT_HERE",
+      "type": "string"
+    },
+    {
+      "key": "chat_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "recipe_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "ingredient_id",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Root",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/",
+            "description": "Welcome message."
+          }
+        },
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/health",
+            "description": "Returns service status and MCP reachability."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Chats",
+      "item": [
+        {
+          "name": "Create chat thread",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.id) { pm.collectionVariables.set('chat_id', json.id); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"My first chat\"\n}"
+            },
+            "url": "{{base_url}}/chats",
+            "description": "Creates a new chat thread. Saves the returned id to {{chat_id}}."
+          }
+        },
+        {
+          "name": "List chat threads",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": "{{base_url}}/chats",
+            "description": "Returns all non-archived chat threads for the authenticated user."
+          }
+        },
+        {
+          "name": "Get chat thread",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": "{{base_url}}/chats/{{chat_id}}",
+            "description": "Returns a single chat thread with its full message history."
+          }
+        },
+        {
+          "name": "Send message",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"What recipes do I have?\"\n}"
+            },
+            "url": "{{base_url}}/chats/{{chat_id}}/messages",
+            "description": "Appends a user message and returns the agent reply."
+          }
+        },
+        {
+          "name": "Stateless chat",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"How many grams are in 2 cups of flour?\"\n}"
+            },
+            "url": "{{base_url}}/chat",
+            "description": "Single-turn chat with no thread persistence."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Recipes",
+      "item": [
+        {
+          "name": "Create recipe",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.recipe && json.recipe.id) { pm.collectionVariables.set('recipe_id', json.recipe.id); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Classic Pancakes\",\n  \"description\": \"Fluffy buttermilk pancakes for two.\",\n  \"ingredients\": [\n    {\n      \"name\": \"All-purpose flour\",\n      \"quantity_used\": 200,\n      \"unit_of_measure\": \"g\",\n      \"cost_per_unit\": 0.002\n    },\n    {\n      \"name\": \"Milk\",\n      \"quantity_used\": 300,\n      \"unit_of_measure\": \"ml\",\n      \"cost_per_unit\": 0.001\n    },\n    {\n      \"name\": \"Egg\",\n      \"quantity_used\": 2,\n      \"unit_of_measure\": \"unit\",\n      \"cost_per_unit\": 0.25\n    }\n  ]\n}"
+            },
+            "url": "{{base_url}}/recipes",
+            "description": "Creates a recipe and links ingredients by name. If an ingredient does not exist in your catalog it is auto-created using unit_of_measure and cost_per_unit. Returns RecipeWithIngredients. Saves recipe.id to {{recipe_id}}.\n\nOmit `ingredients` or pass `[]` to create a recipe with no ingredients yet.\n\nValid unit_of_measure values: g, kg, oz, lb, ml, L, tsp, tbsp, cup, unit"
+          }
+        },
+        {
+          "name": "List recipes",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": "{{base_url}}/recipes",
+            "description": "Returns all recipes with their full ingredient lists in a single query."
+          }
+        },
+        {
+          "name": "Get recipe",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": "{{base_url}}/recipes/{{recipe_id}}",
+            "description": "Returns a single recipe with its full ingredient list."
+          }
+        },
+        {
+          "name": "Update recipe",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Classic Pancakes (updated)\",\n  \"description\": \"Even fluffier now.\"\n}"
+            },
+            "url": "{{base_url}}/recipes/{{recipe_id}}",
+            "description": "Updates the recipe name and/or description. Both fields are optional."
+          }
+        },
+        {
+          "name": "Delete recipe",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": "{{base_url}}/recipes/{{recipe_id}}",
+            "description": "Deletes the recipe and cascades to all its ingredient links."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Recipe Ingredients",
+      "item": [
+        {
+          "name": "Add ingredient to recipe",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.ingredient_id) { pm.collectionVariables.set('ingredient_id', json.ingredient_id); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ingredient_id\": \"PASTE_INGREDIENT_UUID_HERE\",\n  \"quantity_used\": 200\n}"
+            },
+            "url": "{{base_url}}/recipes/{{recipe_id}}/ingredients",
+            "description": "Links an existing ingredient to the recipe with a quantity. Saves ingredient_id to {{ingredient_id}}."
+          }
+        },
+        {
+          "name": "Update ingredient quantity",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity_used\": 250\n}"
+            },
+            "url": "{{base_url}}/recipes/{{recipe_id}}/ingredients/{{ingredient_id}}",
+            "description": "Updates the quantity of a specific ingredient in the recipe."
+          }
+        },
+        {
+          "name": "Remove ingredient from recipe",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": "{{base_url}}/recipes/{{recipe_id}}/ingredients/{{ingredient_id}}",
+            "description": "Removes the ingredient link from the recipe (does not delete the ingredient itself)."
+          }
+        }
+      ]
+    }
+  ]
+}
