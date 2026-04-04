@@ -62,6 +62,45 @@ class ChatStore:
         )
         return response.data or []
 
+    def get_messages_page(
+        self,
+        thread_id: UUID,
+        user_id: str,
+        limit: int,
+        before: int | None = None,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Return a page of messages and whether older messages still exist.
+
+        Fetches ``limit + 1`` rows descending so we can detect ``has_more``
+        without a separate count query, then reverses to chronological order.
+
+        Args:
+            before: Exclusive upper bound on ``sequence_no``. When supplied,
+                    only messages older than this cursor are returned.
+
+        Returns:
+            A tuple of (messages in chronological order, has_more).
+        """
+        query = (
+            self.client.table("chat_messages")
+            .select("*")
+            .eq("thread_id", str(thread_id))
+            .eq("owner_id", user_id)
+            .order("sequence_no", desc=True)
+            .limit(limit + 1)
+        )
+        if before is not None:
+            query = query.lt("sequence_no", before)
+
+        rows = query.execute().data or []
+
+        has_more = len(rows) > limit
+        if has_more:
+            rows = rows[:limit]
+
+        rows.reverse()  # chronological order for the client
+        return rows, has_more
+
     def add_message(
         self,
         *,

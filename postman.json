@@ -28,6 +28,11 @@
       "key": "ingredient_id",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "msg_cursor",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -102,7 +107,71 @@
               { "key": "Authorization", "value": "Bearer {{token}}" }
             ],
             "url": "{{base_url}}/chats/{{chat_id}}",
-            "description": "Returns a single chat thread with its full message history."
+            "description": "Returns thread metadata only (id, title, timestamps). Fetch messages separately via GET /chats/{chat_id}/messages."
+          }
+        },
+        {
+          "name": "Get messages (first page)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.next_cursor) { pm.collectionVariables.set('msg_cursor', json.next_cursor); }",
+                  "console.log('has_more:', json.has_more, '| next_cursor:', json.next_cursor);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/chats/{{chat_id}}/messages?limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["chats", "{{chat_id}}", "messages"],
+              "query": [
+                { "key": "limit", "value": "20", "description": "Max messages per page (1–100, default 20)" },
+                { "key": "before", "value": "", "description": "Cursor: sequence_no returned as next_cursor. Leave empty for the latest messages.", "disabled": true }
+              ]
+            },
+            "description": "Returns the latest `limit` messages in chronological order.\n\nResponse fields:\n- `messages`: array of message objects\n- `has_more`: true if older messages exist\n- `next_cursor`: pass this as `before` to load the previous page\n\nTest script auto-saves next_cursor to {{msg_cursor}}."
+          }
+        },
+        {
+          "name": "Get messages (next page)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.next_cursor) { pm.collectionVariables.set('msg_cursor', json.next_cursor); }",
+                  "console.log('has_more:', json.has_more, '| next_cursor:', json.next_cursor);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/chats/{{chat_id}}/messages?limit=20&before={{msg_cursor}}",
+              "host": ["{{base_url}}"],
+              "path": ["chats", "{{chat_id}}", "messages"],
+              "query": [
+                { "key": "limit", "value": "20" },
+                { "key": "before", "value": "{{msg_cursor}}", "description": "sequence_no cursor from the previous response's next_cursor" }
+              ]
+            },
+            "description": "Loads the page of messages older than {{msg_cursor}}. Keep calling while has_more is true."
           }
         },
         {

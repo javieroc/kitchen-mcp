@@ -3,7 +3,7 @@
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from ..agent import process_chat_prompt
 from ..auth import AuthenticatedUser, get_current_user
@@ -11,6 +11,7 @@ from ..chat_store import ChatStore
 from ..mcp_client import MCPKitchenClient
 from ..models import (
     ChatMessage,
+    ChatMessagesPage,
     ChatThread,
     ChatThreadWithMessages,
     CreateChatRequest,
@@ -85,27 +86,62 @@ async def list_chats(
         raise HTTPException(status_code=500, detail="Failed to list chats.") from exc
 
 
-@router.get("/{chat_id}", response_model=ChatThreadWithMessages)
+@router.get("/{chat_id}", response_model=ChatThread)
 async def get_chat(
     chat_id: UUID,
     user: AuthenticatedUser = Depends(get_current_user),
 ):
-    """Fetch one chat thread and all messages for the authenticated user."""
+    """Fetch thread metadata. Use GET /chats/{chat_id}/messages for messages."""
     try:
         store = _get_store(user)
         thread = store.get_thread(thread_id=chat_id, user_id=user.user_id)
         if not thread:
             raise HTTPException(status_code=404, detail="Chat not found.")
-        messages = store.get_messages(thread_id=chat_id, user_id=user.user_id)
-        return ChatThreadWithMessages(
-            thread=_to_chat_thread(thread),
-            messages=[_to_chat_message(row) for row in messages],
-        )
+        return _to_chat_thread(thread)
     except HTTPException:
         raise
     except Exception as exc:
         logger.exception("Failed to fetch chat thread")
         raise HTTPException(status_code=500, detail="Failed to fetch chat.") from exc
+
+
+@router.get("/{chat_id}/messages", response_model=ChatMessagesPage)
+async def get_chat_messages(
+    chat_id: UUID,
+    limit: int = Query(default=20, ge=1, le=100, description="Number of messages to return"),
+    before: int | None = Query(
+        default=None,
+        description="Cursor: fetch messages with sequence_no older than this value. Omit to get the latest messages.",
+    ),
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Return a cursor-paginated page of messages (newest-first within each page is server-side, returned in chronological order).
+
+    **How to paginate:**
+    1. Call without `before` to get the latest `limit` messages.
+    2. If `has_more` is `true`, call again with `before=next_cursor` to load older messages.
+    3. Repeat until `has_more` is `false`.
+    """
+    try:
+        store = _get_store(user)
+        thread = store.get_thread(thread_id=chat_id, user_id=user.user_id)
+        if not thread:
+            raise HTTPException(status_code=404, detail="Chat not found.")
+
+        rows, has_more = store.get_messages_page(
+            thread_id=chat_id,
+            user_id=user.user_id,
+            limit=limit,
+            before=before,
+        )
+        messages = [_to_chat_message(row) for row in rows]
+        next_cursor = messages[0].sequence_no if (has_more and messages) else None
+        return ChatMessagesPage(messages=messages, has_more=has_more, next_cursor=next_cursor)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to fetch chat messages")
+        raise HTTPException(status_code=500, detail="Failed to fetch messages.") from exc
 
 
 @router.post("/{chat_id}/messages", response_model=SendMessageResponse)

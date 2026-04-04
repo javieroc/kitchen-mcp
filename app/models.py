@@ -63,6 +63,21 @@ class ChatThreadWithMessages(BaseModel):
     messages: list[ChatMessage] = Field(default_factory=list)
 
 
+class ChatMessagesPage(BaseModel):
+    """A page of messages for cursor-based pagination.
+
+    To load older messages pass ``next_cursor`` as the ``before`` query
+    parameter in the next request.
+    """
+
+    messages: list[ChatMessage]
+    has_more: bool
+    next_cursor: int | None = Field(
+        default=None,
+        description="sequence_no of the oldest message on this page. Pass as `before` to fetch the previous page.",
+    )
+
+
 class SendMessageResponse(BaseModel):
     """Response after appending user + assistant turn."""
 
