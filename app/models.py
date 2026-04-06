@@ -97,6 +97,8 @@ class Recipe(BaseModel):
     id: UUID
     name: str
     description: str | None = None
+    category: str | None = None
+    image_url: str | None = None
     owner_id: UUID
     created_at: datetime
 
@@ -137,12 +139,16 @@ class RecipeIngredientInput(BaseModel):
 class CreateRecipeRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=2000)
+    category: str | None = Field(default=None, max_length=100)
+    image_url: str | None = Field(default=None, max_length=2000)
     ingredients: list[RecipeIngredientInput] = Field(default_factory=list)
 
 
 class UpdateRecipeRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=2000)
+    category: str | None = Field(default=None, max_length=100)
+    image_url: str | None = Field(default=None, max_length=2000)
 
 
 class AddRecipeIngredientRequest(BaseModel):

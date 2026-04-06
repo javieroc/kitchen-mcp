@@ -54,11 +54,20 @@ class RecipeStore:
         return rows[0] if rows else None
 
     def create_recipe(
-        self, user_id: str, name: str, description: str | None = None
+        self,
+        user_id: str,
+        name: str,
+        description: str | None = None,
+        category: str | None = None,
+        image_url: str | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {"owner_id": user_id, "name": name.strip()}
         if description is not None:
             payload["description"] = description.strip()
+        if category is not None:
+            payload["category"] = category.strip()
+        if image_url is not None:
+            payload["image_url"] = image_url.strip()
         response = self.client.table("recipes").insert(payload).execute()
         if not response.data:
             raise RuntimeError("Could not create recipe.")
@@ -70,9 +79,17 @@ class RecipeStore:
         name: str,
         description: str | None,
         ingredients: list[dict[str, Any]],  # [{"ingredient_id": str, "quantity_used": float}]
+        category: str | None = None,
+        image_url: str | None = None,
     ) -> dict[str, Any]:
         """Insert the recipe row, batch-insert all links, return full embedded row."""
-        recipe_row = self.create_recipe(user_id=user_id, name=name, description=description)
+        recipe_row = self.create_recipe(
+            user_id=user_id,
+            name=name,
+            description=description,
+            category=category,
+            image_url=image_url,
+        )
         recipe_id = recipe_row["id"]
 
         if ingredients:
@@ -99,12 +116,18 @@ class RecipeStore:
         user_id: str,
         name: str | None = None,
         description: str | None = None,
+        category: str | None = None,
+        image_url: str | None = None,
     ) -> dict[str, Any] | None:
         patch: dict[str, Any] = {}
         if name is not None:
             patch["name"] = name.strip()
         if description is not None:
             patch["description"] = description.strip()
+        if category is not None:
+            patch["category"] = category.strip()
+        if image_url is not None:
+            patch["image_url"] = image_url.strip()
         if not patch:
             return self.get_recipe(recipe_id, user_id)
 

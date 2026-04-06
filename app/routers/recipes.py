@@ -94,6 +94,8 @@ async def create_recipe(
             name=payload.name,
             description=payload.description,
             ingredients=resolved,
+            category=payload.category,
+            image_url=payload.image_url,
         )
         return _to_recipe_with_ingredients(row)
     except HTTPException:
@@ -150,6 +152,8 @@ async def update_recipe(
             user_id=user.user_id,
             name=payload.name,
             description=payload.description,
+            category=payload.category,
+            image_url=payload.image_url,
         )
         if not row:
             raise HTTPException(status_code=404, detail="Recipe not found.")
