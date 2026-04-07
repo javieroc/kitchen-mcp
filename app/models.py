@@ -86,6 +86,23 @@ class SendMessageResponse(BaseModel):
     assistant_message: ChatMessage
 
 
+class VoiceMessageResponse(BaseModel):
+    """Response after processing a voice message.
+
+    ``transcription`` contains the STT result so clients can display the
+    recognised text alongside the assistant reply.  When the request includes
+    ``?tts=true``, ``audio_base64`` holds the base64-encoded MP3 of the
+    assistant response and ``audio_mime_type`` is ``"audio/mpeg"``.
+    """
+
+    transcription: str
+    thread: ChatThread
+    user_message: ChatMessage
+    assistant_message: ChatMessage
+    audio_base64: str | None = None
+    audio_mime_type: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Recipe models
 # ---------------------------------------------------------------------------

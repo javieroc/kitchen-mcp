@@ -1,9 +1,10 @@
 """Chat thread and message endpoints."""
 
+import base64
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 
 from ..agent import process_chat_prompt
 from ..auth import AuthenticatedUser, get_current_user
@@ -17,7 +18,10 @@ from ..models import (
     CreateChatRequest,
     SendMessageRequest,
     SendMessageResponse,
+    VoiceMessageResponse,
 )
+from ..voice.stt import transcribe_audio
+from ..voice.tts import synthesize_speech
 
 logger = logging.getLogger(__name__)
 
@@ -190,3 +194,113 @@ async def send_chat_message(
     except Exception as exc:
         logger.exception("Failed to process chat message")
         raise HTTPException(status_code=500, detail="Failed to process chat message.") from exc
+
+
+@router.post("/{chat_id}/messages/voice", response_model=VoiceMessageResponse)
+async def send_voice_message(
+    chat_id: UUID,
+    audio: UploadFile = File(..., description="Audio file (mp3, wav, webm, ogg, m4a, flac — max 25 MB)"),
+    tts: bool = Query(
+        default=False,
+        description="If true, synthesize the assistant reply to speech and include base64 MP3 in the response.",
+    ),
+    language: str | None = Query(
+        default=None,
+        description="Optional BCP-47 language code for STT (e.g. 'en', 'es'). Omit for auto-detection.",
+    ),
+    user: AuthenticatedUser = Depends(get_current_user),
+    mcp_client: MCPKitchenClient = Depends(_get_mcp_client),
+):
+    """Accept an audio file, transcribe it, run the chat agent, and return the response.
+
+    **Flow:**
+    1. Audio → Groq Whisper (STT) → transcription text
+    2. Transcription → existing chat agent → assistant reply
+    3. Both messages persisted to the chat thread
+    4. (Optional, `?tts=true`) Reply → ElevenLabs TTS → base64 MP3 in response
+
+    **Supported audio formats:** flac, mp3, mp4, m4a, ogg, wav, webm (max 25 MB).
+    """
+    try:
+        audio_bytes = await audio.read()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Failed to read uploaded audio file.") from exc
+
+    if len(audio_bytes) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Audio file exceeds the 25 MB limit.")
+
+    # 1. Speech → Text
+    try:
+        transcription = await transcribe_audio(
+            audio_bytes=audio_bytes,
+            filename=audio.filename or "audio",
+            content_type=audio.content_type or "audio/webm",
+            language=language,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        logger.exception("STT service misconfigured")
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("STT transcription failed")
+        raise HTTPException(status_code=502, detail="Speech-to-text transcription failed.") from exc
+
+    if not transcription.strip():
+        raise HTTPException(status_code=422, detail="No speech detected in the audio file.")
+
+    # 2. Chat agent (reuses the same logic as the text endpoint)
+    try:
+        store = _get_store(user)
+        thread = store.get_thread(thread_id=chat_id, user_id=user.user_id)
+        if not thread:
+            raise HTTPException(status_code=404, detail="Chat not found.")
+
+        user_message = store.add_message(
+            thread_id=chat_id,
+            user_id=user.user_id,
+            role="user",
+            content=transcription,
+        )
+        result = await process_chat_prompt(
+            prompt=transcription,
+            user_id=user.user_id,
+            mcp_client=mcp_client,
+        )
+        assistant_message = store.add_message(
+            thread_id=chat_id,
+            user_id=user.user_id,
+            role="assistant",
+            content=result.reply,
+            tools_used=result.tools_used,
+        )
+        refreshed_thread = store.get_thread(thread_id=chat_id, user_id=user.user_id)
+        if not refreshed_thread:
+            raise HTTPException(status_code=404, detail="Chat not found.")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to process voice chat message")
+        raise HTTPException(status_code=500, detail="Failed to process chat message.") from exc
+
+    # 3. (Optional) Text → Speech
+    audio_base64: str | None = None
+    audio_mime_type: str | None = None
+    if tts:
+        try:
+            tts_bytes = await synthesize_speech(result.reply)
+            audio_base64 = base64.b64encode(tts_bytes).decode()
+            audio_mime_type = "audio/mpeg"
+        except RuntimeError as exc:
+            logger.warning("TTS service misconfigured, skipping: %s", exc)
+        except Exception as exc:
+            logger.warning("TTS synthesis failed, skipping: %s", exc)
+
+    return VoiceMessageResponse(
+        transcription=transcription,
+        thread=_to_chat_thread(refreshed_thread),
+        user_message=_to_chat_message(user_message),
+        assistant_message=_to_chat_message(assistant_message),
+        audio_base64=audio_base64,
+        audio_mime_type=audio_mime_type,
+    )
