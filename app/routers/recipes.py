@@ -97,6 +97,8 @@ async def create_recipe(
             ingredients=resolved,
             category=payload.category,
             image_url=payload.image_url,
+            yield_amount=float(payload.yield_amount),
+            yield_unit=payload.yield_unit,
         )
         return _to_recipe_with_ingredients(row)
     except HTTPException:
@@ -162,6 +164,8 @@ async def update_recipe(
             description=payload.description,
             category=payload.category,
             image_url=payload.image_url,
+            yield_amount=float(payload.yield_amount) if payload.yield_amount is not None else None,
+            yield_unit=payload.yield_unit,
         )
         if not row:
             raise HTTPException(status_code=404, detail="Recipe not found.")

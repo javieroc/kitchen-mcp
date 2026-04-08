@@ -73,35 +73,42 @@ def list_available_recipes(user_id: str) -> str:
     Returns a list of all recipe names and descriptions in the database.
     """
     try:
-        res = supabase.table("recipes").select("name, description").eq("owner_id", user_id).execute()
+        res = supabase.table("recipes").select("name, description, yield_amount, yield_unit").eq("owner_id", user_id).execute()
         if not res.data:
             return "No recipes found in the database."
 
         output = "**Available Recipes:**\n"
         for r in res.data:
             desc = r['description'] if r['description'] else "No description"
-            output += f"- **{r['name']}**: {desc}\n"
+            yield_amount = r.get('yield_amount') or 1
+            yield_unit = r.get('yield_unit') or 'portion'
+            output += f"- **{r['name']}** (yields {yield_amount} {yield_unit}): {desc}\n"
         return output
     except Exception as e:
         return f"Error listing recipes: {str(e)}"
 
 
 @mcp.tool()
-def create_full_recipe(name: str, description: str, ingredients: list[dict], user_id: str) -> str:
+def create_full_recipe(name: str, description: str, ingredients: list[dict], user_id: str, yield_amount: float = 1, yield_unit: str = "portion") -> str:
     """
     Creates a new recipe and links multiple ingredients to it.
 
     Args:
         name: Name of the dish (e.g., 'Margherita Pizza').
         description: A brief description.
-        ingredients: A list of objects with 'name' and 'amount'.
-                     Example: [{"name": "00 Flour", "amount": 250}, {"name": "Water", "amount": 165}]
+        yield_amount: The numeric quantity this recipe produces (e.g. 4, 500, 12). Default 1.
+        yield_unit: What that quantity represents (e.g. 'portions', 'g', 'cookies', 'loaf'). Default 'portion'.
+        ingredients: A list of objects with 'name' and 'amount' (totals for the full yield).
+                     Optionally include 'unit' and 'cost' for auto-created ingredients.
+                     Example: [{"name": "00 Flour", "amount": 250, "unit": "g"}, {"name": "Water", "amount": 165, "unit": "ml"}]
     """
     try:
         recipe_res = supabase.table("recipes").insert(
             {
                 "name": name,
                 "description": description,
+                "yield_amount": yield_amount,
+                "yield_unit": yield_unit,
                 "owner_id": user_id,
             }
         ).execute()
@@ -143,7 +150,7 @@ def create_full_recipe(name: str, description: str, ingredients: list[dict], use
             ).execute()
             links_created += 1
 
-        return f"Successfully created '{name}' with {links_created} ingredients linked."
+        return f"Successfully created '{name}' (yields {yield_amount} {yield_unit}) with {links_created} ingredients linked."
 
     except Exception as e:
         return f"Error creating recipe: {str(e)}"
@@ -156,7 +163,7 @@ def get_recipe_ingredients(recipe_name: str, user_id: str) -> str:
     """
     try:
         res = supabase.table("recipe_ingredients") \
-            .select("quantity_used, ingredients(name, unit_of_measure), recipes!inner(name)") \
+            .select("quantity_used, ingredients(name, unit_of_measure), recipes!inner(name, yield_amount, yield_unit)") \
             .eq("recipes.name", recipe_name) \
             .eq("owner_id", user_id) \
             .execute()
@@ -164,25 +171,37 @@ def get_recipe_ingredients(recipe_name: str, user_id: str) -> str:
         if not res.data:
             return f"No ingredients found for '{recipe_name}'."
 
-        output = f"**Ingredients for {recipe_name}:**\n"
+        recipe_meta = res.data[0]['recipes']
+        base_yield = float(recipe_meta.get('yield_amount') or 1)
+        yield_unit = recipe_meta.get('yield_unit') or 'portion'
+        output = f"**Ingredients for {recipe_name}** (yields {base_yield} {yield_unit}):\n"
         for item in res.data:
             ing = item['ingredients']
-            output += f"- {ing['name']}: {item['quantity_used']} {ing['unit_of_measure']}\n"
+            total_qty = float(item['quantity_used'])
+            per_unit = total_qty / base_yield
+            output += f"- {ing['name']}: {total_qty} {ing['unit_of_measure']} total ({per_unit:.3g} per {yield_unit})\n"
         return output
     except Exception as e:
         return f"Error fetching details: {str(e)}"
 
 
 @mcp.tool()
-def scale_recipe(recipe_name: str, servings: int, user_id: str) -> str:
+def scale_recipe(recipe_name: str, target_amount: float, user_id: str, target_unit: str = "") -> str:
     """
-    Calculates the total weight and cost of ingredients needed for multiple servings.
+    Calculates exact ingredient quantities and cost for any desired yield.
+    Works for any recipe type: 2 portions of pasta, 250g of hummus, 6 cookies, etc.
+
+    Args:
+        recipe_name: Name of the recipe.
+        target_amount: The desired output quantity (e.g. 2, 250, 6).
+        target_unit: The unit of the desired output (e.g. 'portions', 'g', 'cookies').
+                     If omitted, inherits the recipe's yield_unit.
     """
     try:
         res = supabase.table("recipe_ingredients") \
             .select("""
                 quantity_used,
-                recipes!inner(name),
+                recipes!inner(name, yield_amount, yield_unit),
                 ingredients(name, unit_of_measure, cost_per_unit)
             """) \
             .eq("recipes.name", recipe_name) \
@@ -192,21 +211,28 @@ def scale_recipe(recipe_name: str, servings: int, user_id: str) -> str:
         if not res.data:
             return f"Recipe '{recipe_name}' not found or has no ingredients."
 
-        output = f"**Production Plan for {servings}x {recipe_name}**\n"
-        grand_total = 0
+        recipe_meta = res.data[0]['recipes']
+        base_yield = float(recipe_meta.get('yield_amount') or 1)
+        base_unit = recipe_meta.get('yield_unit') or 'portion'
+        display_unit = target_unit.strip() or base_unit
+        factor = target_amount / base_yield
+
+        output = (
+            f"**{recipe_name}** — scaled to **{target_amount} {display_unit}**"
+            f" (base recipe yields {base_yield} {base_unit})\n\n"
+        )
+        grand_total = 0.0
 
         for item in res.data:
             ing = item['ingredients']
-            qty_per_serving = item['quantity_used']
+            base_qty = float(item['quantity_used'])
+            scaled_qty = base_qty * factor
+            line_cost = scaled_qty * float(ing['cost_per_unit'])
+            grand_total += line_cost
+            output += f"- {ing['name']}: {scaled_qty:.3g} {ing['unit_of_measure']} (${line_cost:.2f})\n"
 
-            total_qty = qty_per_serving * servings
-            total_cost = total_qty * ing['cost_per_unit']
-            grand_total += total_cost
-
-            output += (f"- {ing['name']}: {total_qty}{ing['unit_of_measure']} "
-                       f"(Cost: ${total_cost:.2f})\n")
-
-        output += f"---\n**Total Batch Cost: ${grand_total:.2f}**"
+        output += f"\n**Total cost: ${grand_total:.2f}**"
+        output += f"\n**Cost per {display_unit}: ${grand_total / target_amount:.2f}**"
         return output
 
     except Exception as e:
@@ -223,7 +249,7 @@ def calculate_recipe_cost(recipe_name: str, user_id: str) -> str:
         res = supabase.table("recipe_ingredients") \
             .select("""
                 quantity_used,
-                recipes!inner(name),
+                recipes!inner(name, yield_amount, yield_unit),
                 ingredients(name, cost_per_unit, unit_of_measure)
             """) \
             .eq("recipes.name", recipe_name) \
@@ -233,8 +259,12 @@ def calculate_recipe_cost(recipe_name: str, user_id: str) -> str:
         if not res.data:
             return f"No ingredients found for recipe '{recipe_name}'."
 
+        recipe_meta = res.data[0]['recipes']
+        base_yield = float(recipe_meta.get('yield_amount') or 1)
+        yield_unit = recipe_meta.get('yield_unit') or 'portion'
+
         total_cost = 0.0
-        breakdown = f"**Economic Breakdown for {recipe_name}**\n"
+        breakdown = f"**Economic Breakdown for {recipe_name}** (yields {base_yield} {yield_unit})\n"
         breakdown += "------------------------------------------\n"
 
         for item in res.data:
@@ -249,7 +279,8 @@ def calculate_recipe_cost(recipe_name: str, user_id: str) -> str:
                           f"(@ ${unit_cost:.4f}) = **${line_cost:.2f}**\n")
 
         breakdown += "------------------------------------------\n"
-        breakdown += f"**Total Recipe Cost: ${total_cost:.2f}**"
+        breakdown += f"**Total Recipe Cost: ${total_cost:.2f}**\n"
+        breakdown += f"**Cost per {yield_unit}: ${total_cost / base_yield:.2f}**"
 
         return breakdown
 
@@ -317,15 +348,17 @@ def get_inventory_report(user_id: str) -> str:
 
 
 @mcp.tool()
-def update_recipe(recipe_name: str, user_id: str, new_name: str | None = None, description: str | None = None, category: str | None = None) -> str:
+def update_recipe(recipe_name: str, user_id: str, new_name: str | None = None, description: str | None = None, category: str | None = None, yield_amount: float | None = None, yield_unit: str | None = None) -> str:
     """
-    Updates a recipe's metadata (name, description, or category) by its current name.
+    Updates a recipe's metadata by its current name.
 
     Args:
         recipe_name: The current name of the recipe to update.
         new_name: Optional new name for the recipe.
         description: Optional new description.
         category: Optional new category.
+        yield_amount: Optional new base yield quantity (e.g. 500, 4, 12).
+        yield_unit: Optional new yield unit (e.g. 'g', 'portions', 'cookies').
     """
     try:
         res = supabase.table("recipes").select("id").eq("name", recipe_name).eq("owner_id", user_id).execute()
@@ -340,13 +373,17 @@ def update_recipe(recipe_name: str, user_id: str, new_name: str | None = None, d
             updates["description"] = description
         if category is not None:
             updates["category"] = category
+        if yield_amount is not None:
+            updates["yield_amount"] = yield_amount
+        if yield_unit is not None:
+            updates["yield_unit"] = yield_unit
 
         if not updates:
             return "No fields provided to update."
 
         supabase.table("recipes").update(updates).eq("id", recipe_id).eq("owner_id", user_id).execute()
         updated_name = new_name or recipe_name
-        return f"Recipe '{recipe_name}' updated successfully. New name: '{updated_name}'." if new_name else f"Recipe '{recipe_name}' updated successfully."
+        return f"Recipe '{updated_name}' updated successfully."
     except Exception as e:
         return f"Error updating recipe: {str(e)}"
 

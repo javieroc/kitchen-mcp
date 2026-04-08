@@ -219,6 +219,13 @@ async def process_chat_prompt(prompt: str, user_id: str, mcp_client: MCPKitchenC
         )
         ingredients = [{"name": m[0].strip(), "amount": float(m[1]), "unit": m[2]} for m in ing_matches]
         desc_match = re.search(r"description\s*[:\s]+(.+?)(?:,|with ingredients|\.|$)", prompt, flags=re.IGNORECASE)
+        yield_match = re.search(
+            r"(?:yields?|makes?|for)\s+(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?",
+            prompt,
+            flags=re.IGNORECASE,
+        )
+        yield_amount = float(yield_match.group(1)) if yield_match else 1
+        yield_unit = (yield_match.group(2) or "portion").strip() if yield_match else "portion"
         tools_used.append("create_full_recipe")
         factual = await mcp_client.call_tool(
             "create_full_recipe",
@@ -226,6 +233,8 @@ async def process_chat_prompt(prompt: str, user_id: str, mcp_client: MCPKitchenC
                 "name": recipe,
                 "description": desc_match.group(1).strip() if desc_match else "",
                 "ingredients": ingredients,
+                "yield_amount": yield_amount,
+                "yield_unit": yield_unit,
                 "user_id": user_id,
             },
         )
@@ -338,19 +347,25 @@ async def process_chat_prompt(prompt: str, user_id: str, mcp_client: MCPKitchenC
         )
         return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual), tools_used=tools_used)
 
-    if "scale" in normalized or "serving" in normalized:
-        servings_match = re.search(r"(\d+)\s*(?:servings|serving|x)", normalized)
-        servings = int(servings_match.group(1)) if servings_match else 2
+    if "scale" in normalized or re.search(r"\b(for|make|want|need)\b.{0,15}\b\d+\b", normalized):
+        # Extract target amount + optional unit: "4 portions", "250 g", "6 cookies", "2 loaves"
+        target_match = re.search(
+            r"(\d+(?:\.\d+)?)\s*(portions?|servings?|g|kg|ml|L|oz|lb|cookies?|loaves?|loaf|pieces?|units?)?",
+            prompt,
+            flags=re.IGNORECASE,
+        )
         recipe = _extract_recipe_name(prompt)
-        if not recipe:
+        if not recipe or not target_match:
             return AgentResult(
-                reply="Please specify a recipe name, e.g. scale \"Margherita Pizza\" to 4 servings.",
+                reply='Please specify recipe and desired amount, e.g. scale "Hummus" to 250 g or scale "Pasta" for 2 portions.',
                 tools_used=tools_used,
             )
+        target_amount = float(target_match.group(1))
+        target_unit = (target_match.group(2) or "").strip()
         tools_used.append("scale_recipe")
         factual = await mcp_client.call_tool(
             "scale_recipe",
-            {"recipe_name": recipe, "servings": servings, "user_id": user_id},
+            {"recipe_name": recipe, "target_amount": target_amount, "target_unit": target_unit, "user_id": user_id},
         )
         return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual), tools_used=tools_used)
 

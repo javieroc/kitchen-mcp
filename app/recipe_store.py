@@ -95,8 +95,15 @@ class RecipeStore:
         description: str | None = None,
         category: str | None = None,
         image_url: str | None = None,
+        yield_amount: float = 1,
+        yield_unit: str = "portion",
     ) -> dict[str, Any]:
-        payload: dict[str, Any] = {"owner_id": user_id, "name": name.strip()}
+        payload: dict[str, Any] = {
+            "owner_id": user_id,
+            "name": name.strip(),
+            "yield_amount": yield_amount,
+            "yield_unit": yield_unit.strip(),
+        }
         if description is not None:
             payload["description"] = description.strip()
         if category is not None:
@@ -116,6 +123,8 @@ class RecipeStore:
         ingredients: list[dict[str, Any]],  # [{"ingredient_id": str, "quantity_used": float}]
         category: str | None = None,
         image_url: str | None = None,
+        yield_amount: float = 1,
+        yield_unit: str = "portion",
     ) -> dict[str, Any]:
         """Insert the recipe row, batch-insert all links, return full embedded row."""
         recipe_row = self.create_recipe(
@@ -124,6 +133,8 @@ class RecipeStore:
             description=description,
             category=category,
             image_url=image_url,
+            yield_amount=yield_amount,
+            yield_unit=yield_unit,
         )
         recipe_id = recipe_row["id"]
 
@@ -153,6 +164,8 @@ class RecipeStore:
         description: str | None = None,
         category: str | None = None,
         image_url: str | None = None,
+        yield_amount: float | None = None,
+        yield_unit: str | None = None,
     ) -> dict[str, Any] | None:
         patch: dict[str, Any] = {}
         if name is not None:
@@ -163,6 +176,10 @@ class RecipeStore:
             patch["category"] = category.strip()
         if image_url is not None:
             patch["image_url"] = image_url.strip()
+        if yield_amount is not None:
+            patch["yield_amount"] = yield_amount
+        if yield_unit is not None:
+            patch["yield_unit"] = yield_unit.strip()
         if not patch:
             return self.get_recipe(recipe_id, user_id)
 

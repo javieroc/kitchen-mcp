@@ -116,6 +116,8 @@ class Recipe(BaseModel):
     description: str | None = None
     category: str | None = None
     image_url: str | None = None
+    yield_amount: Decimal = Decimal("1")
+    yield_unit: str = "portion"
     owner_id: UUID
     created_at: datetime
 
@@ -173,6 +175,8 @@ class CreateRecipeRequest(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
     category: str | None = Field(default=None, max_length=100)
     image_url: str | None = Field(default=None, max_length=2000)
+    yield_amount: Decimal = Field(default=Decimal("1"), gt=0, description="The quantity this recipe yields (e.g. 4, 500, 12)")
+    yield_unit: str = Field(default="portion", max_length=50, description="Unit for the yield (e.g. 'portions', 'g', 'cookies', 'loaf')")
     ingredients: list[RecipeIngredientInput] = Field(default_factory=list)
 
 
@@ -181,6 +185,8 @@ class UpdateRecipeRequest(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
     category: str | None = Field(default=None, max_length=100)
     image_url: str | None = Field(default=None, max_length=2000)
+    yield_amount: Decimal | None = Field(default=None, gt=0, description="The quantity this recipe yields (e.g. 4, 500, 12)")
+    yield_unit: str | None = Field(default=None, max_length=50, description="Unit for the yield (e.g. 'portions', 'g', 'cookies', 'loaf')")
 
 
 class AddRecipeIngredientRequest(BaseModel):
