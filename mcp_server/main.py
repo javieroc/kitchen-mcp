@@ -118,20 +118,30 @@ def create_full_recipe(name: str, description: str, ingredients: list[dict], use
                 .select("id")
                 .eq("name", ing_name)
                 .eq("owner_id", user_id)
-                .single()
                 .execute()
             )
 
             if ing_res.data:
-                supabase.table("recipe_ingredients").insert(
-                    {
-                        "recipe_id": recipe_id,
-                        "ingredient_id": ing_res.data["id"],
-                        "quantity_used": amount,
-                        "owner_id": user_id,
-                    }
-                ).execute()
-                links_created += 1
+                ing_id = ing_res.data[0]["id"]
+            else:
+                # Auto-create missing ingredient with provided or default metadata
+                new_ing = supabase.table("ingredients").insert({
+                    "name": ing_name,
+                    "unit_of_measure": item.get("unit", "unit"),
+                    "cost_per_unit": item.get("cost", 0),
+                    "owner_id": user_id,
+                }).execute()
+                ing_id = new_ing.data[0]["id"]
+
+            supabase.table("recipe_ingredients").insert(
+                {
+                    "recipe_id": recipe_id,
+                    "ingredient_id": ing_id,
+                    "quantity_used": amount,
+                    "owner_id": user_id,
+                }
+            ).execute()
+            links_created += 1
 
         return f"Successfully created '{name}' with {links_created} ingredients linked."
 
@@ -304,6 +314,158 @@ def get_inventory_report(user_id: str) -> str:
         return output
     except Exception as e:
         return f"Error fetching inventory: {str(e)}"
+
+
+@mcp.tool()
+def update_recipe(recipe_name: str, user_id: str, new_name: str | None = None, description: str | None = None, category: str | None = None) -> str:
+    """
+    Updates a recipe's metadata (name, description, or category) by its current name.
+
+    Args:
+        recipe_name: The current name of the recipe to update.
+        new_name: Optional new name for the recipe.
+        description: Optional new description.
+        category: Optional new category.
+    """
+    try:
+        res = supabase.table("recipes").select("id").eq("name", recipe_name).eq("owner_id", user_id).execute()
+        if not res.data:
+            return f"Recipe '{recipe_name}' not found."
+        recipe_id = res.data[0]["id"]
+
+        updates: dict = {}
+        if new_name is not None:
+            updates["name"] = new_name
+        if description is not None:
+            updates["description"] = description
+        if category is not None:
+            updates["category"] = category
+
+        if not updates:
+            return "No fields provided to update."
+
+        supabase.table("recipes").update(updates).eq("id", recipe_id).eq("owner_id", user_id).execute()
+        updated_name = new_name or recipe_name
+        return f"Recipe '{recipe_name}' updated successfully. New name: '{updated_name}'." if new_name else f"Recipe '{recipe_name}' updated successfully."
+    except Exception as e:
+        return f"Error updating recipe: {str(e)}"
+
+
+@mcp.tool()
+def delete_recipe(recipe_name: str, user_id: str) -> str:
+    """
+    Permanently deletes a recipe and all its ingredient links by name.
+
+    Args:
+        recipe_name: The name of the recipe to delete.
+    """
+    try:
+        res = supabase.table("recipes").select("id").eq("name", recipe_name).eq("owner_id", user_id).execute()
+        if not res.data:
+            return f"Recipe '{recipe_name}' not found."
+        recipe_id = res.data[0]["id"]
+
+        supabase.table("recipe_ingredients").delete().eq("recipe_id", recipe_id).execute()
+        supabase.table("recipes").delete().eq("id", recipe_id).eq("owner_id", user_id).execute()
+        return f"Recipe '{recipe_name}' and all its ingredient links have been deleted."
+    except Exception as e:
+        return f"Error deleting recipe: {str(e)}"
+
+
+@mcp.tool()
+def add_ingredient_to_recipe(recipe_name: str, ingredient_name: str, amount: float, user_id: str, unit: str = "unit", cost: float = 0.0) -> str:
+    """
+    Adds an ingredient to an existing recipe. Auto-creates the ingredient if it does not exist yet.
+
+    Args:
+        recipe_name: The name of the recipe.
+        ingredient_name: The name of the ingredient to add.
+        amount: The quantity to use in this recipe.
+        unit: Unit of measure (g, kg, ml, L, tsp, tbsp, cup, oz, lb, unit). Used only when auto-creating.
+        cost: Cost per unit. Used only when auto-creating the ingredient.
+    """
+    try:
+        recipe_res = supabase.table("recipes").select("id").eq("name", recipe_name).eq("owner_id", user_id).execute()
+        if not recipe_res.data:
+            return f"Recipe '{recipe_name}' not found."
+        recipe_id = recipe_res.data[0]["id"]
+
+        ing_res = supabase.table("ingredients").select("id").eq("name", ingredient_name).eq("owner_id", user_id).execute()
+        if ing_res.data:
+            ing_id = ing_res.data[0]["id"]
+        else:
+            new_ing = supabase.table("ingredients").insert({
+                "name": ingredient_name,
+                "unit_of_measure": unit,
+                "cost_per_unit": cost,
+                "owner_id": user_id,
+            }).execute()
+            ing_id = new_ing.data[0]["id"]
+
+        supabase.table("recipe_ingredients").insert({
+            "recipe_id": recipe_id,
+            "ingredient_id": ing_id,
+            "quantity_used": amount,
+            "owner_id": user_id,
+        }).execute()
+        return f"Added {amount} {unit} of '{ingredient_name}' to recipe '{recipe_name}'."
+    except Exception as e:
+        return f"Error adding ingredient to recipe: {str(e)}"
+
+
+@mcp.tool()
+def update_recipe_ingredient_quantity(recipe_name: str, ingredient_name: str, new_amount: float, user_id: str) -> str:
+    """
+    Updates the quantity of a specific ingredient within a recipe.
+
+    Args:
+        recipe_name: The name of the recipe.
+        ingredient_name: The name of the ingredient whose quantity to change.
+        new_amount: The new quantity to set.
+    """
+    try:
+        res = supabase.table("recipe_ingredients") \
+            .select("id, recipes!inner(name), ingredients!inner(name)") \
+            .eq("recipes.name", recipe_name) \
+            .eq("ingredients.name", ingredient_name) \
+            .eq("owner_id", user_id) \
+            .execute()
+
+        if not res.data:
+            return f"Ingredient '{ingredient_name}' not found in recipe '{recipe_name}'."
+
+        link_id = res.data[0]["id"]
+        supabase.table("recipe_ingredients").update({"quantity_used": new_amount}).eq("id", link_id).execute()
+        return f"Updated '{ingredient_name}' quantity to {new_amount} in recipe '{recipe_name}'."
+    except Exception as e:
+        return f"Error updating ingredient quantity: {str(e)}"
+
+
+@mcp.tool()
+def remove_ingredient_from_recipe(recipe_name: str, ingredient_name: str, user_id: str) -> str:
+    """
+    Removes a specific ingredient from a recipe without deleting the ingredient from the catalog.
+
+    Args:
+        recipe_name: The name of the recipe.
+        ingredient_name: The name of the ingredient to remove.
+    """
+    try:
+        res = supabase.table("recipe_ingredients") \
+            .select("id, recipes!inner(name), ingredients!inner(name)") \
+            .eq("recipes.name", recipe_name) \
+            .eq("ingredients.name", ingredient_name) \
+            .eq("owner_id", user_id) \
+            .execute()
+
+        if not res.data:
+            return f"Ingredient '{ingredient_name}' not found in recipe '{recipe_name}'."
+
+        link_id = res.data[0]["id"]
+        supabase.table("recipe_ingredients").delete().eq("id", link_id).execute()
+        return f"Removed '{ingredient_name}' from recipe '{recipe_name}'."
+    except Exception as e:
+        return f"Error removing ingredient from recipe: {str(e)}"
 
 
 @mcp.custom_route("/health", methods=["GET"], include_in_schema=False)
