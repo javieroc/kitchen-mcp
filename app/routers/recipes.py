@@ -3,7 +3,7 @@
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from ..auth import AuthenticatedUser, get_current_user
 from ..models import (
@@ -12,6 +12,7 @@ from ..models import (
     Recipe,
     RecipeIngredientDetail,
     RecipeIngredientInput,
+    RecipesPage,
     RecipeWithIngredients,
     UpdateRecipeIngredientRequest,
     UpdateRecipeRequest,
@@ -105,15 +106,22 @@ async def create_recipe(
         raise HTTPException(status_code=500, detail="Failed to create recipe.") from exc
 
 
-@router.get("", response_model=list[RecipeWithIngredients])
+@router.get("", response_model=RecipesPage)
 async def list_recipes(
     user: AuthenticatedUser = Depends(get_current_user),
+    limit: int = Query(default=20, ge=1, le=100),
+    before: str | None = Query(default=None, description="Cursor: created_at of the last recipe from the previous page"),
 ):
-    """List all recipes with their ingredients (single query)."""
+    """List recipes with cursor-based pagination (newest first).
+
+    Pass ``next_cursor`` from the previous response as ``before`` to fetch the next page.
+    """
     try:
         store = _get_store(user)
-        rows = store.list_recipes(user_id=user.user_id)
-        return [_to_recipe_with_ingredients(row) for row in rows]
+        rows, has_more = store.list_recipes_page(user_id=user.user_id, limit=limit, before=before)
+        recipes = [_to_recipe_with_ingredients(row) for row in rows]
+        next_cursor = rows[-1]["created_at"] if has_more else None
+        return RecipesPage(recipes=recipes, has_more=has_more, next_cursor=next_cursor)
     except Exception as exc:
         logger.exception("Failed to list recipes")
         raise HTTPException(status_code=500, detail="Failed to list recipes.") from exc

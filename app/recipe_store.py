@@ -40,6 +40,41 @@ class RecipeStore:
         )
         return response.data or []
 
+    def list_recipes_page(
+        self,
+        user_id: str,
+        limit: int,
+        before: str | None = None,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Return a page of recipes (newest first) and whether older ones exist.
+
+        Fetches ``limit + 1`` rows to detect ``has_more`` without a count query.
+
+        Args:
+            before: Exclusive upper bound on ``created_at`` (ISO string cursor).
+                    When supplied, only recipes older than this cursor are returned.
+
+        Returns:
+            A tuple of (recipes newest-first, has_more).
+        """
+        query = (
+            self.client.table("recipes")
+            .select(_RECIPE_SELECT)
+            .eq("owner_id", user_id)
+            .order("created_at", desc=True)
+            .limit(limit + 1)
+        )
+        if before is not None:
+            query = query.lt("created_at", before)
+
+        rows = query.execute().data or []
+
+        has_more = len(rows) > limit
+        if has_more:
+            rows = rows[:limit]
+
+        return rows, has_more
+
     def get_recipe(self, recipe_id: UUID, user_id: str) -> dict[str, Any] | None:
         """Return a single recipe with its ingredients in one query."""
         response = (

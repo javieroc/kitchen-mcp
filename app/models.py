@@ -153,6 +153,21 @@ class RecipeIngredientInput(BaseModel):
     cost_per_unit: Decimal = Field(default=Decimal("0.00"), ge=0, description="Only used when auto-creating the ingredient")
 
 
+class RecipesPage(BaseModel):
+    """A page of recipes for cursor-based pagination.
+
+    Pass ``next_cursor`` as the ``before`` query parameter to fetch the next
+    (older) page.
+    """
+
+    recipes: list[RecipeWithIngredients]
+    has_more: bool
+    next_cursor: str | None = Field(
+        default=None,
+        description="created_at of the oldest recipe on this page. Pass as `before` to fetch the previous page.",
+    )
+
+
 class CreateRecipeRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=2000)
