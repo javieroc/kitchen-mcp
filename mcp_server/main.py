@@ -70,22 +70,77 @@ def update_ingredient_price(name: str, new_cost: float, user_id: str) -> str:
 @mcp.tool()
 def list_available_recipes(user_id: str) -> str:
     """
-    Returns a list of all recipe names and descriptions in the database.
+    Returns a concise list of all recipe names with yield info and category.
+    Use get_recipe_details to fetch the full steps and ingredients for a specific recipe.
     """
     try:
-        res = supabase.table("recipes").select("name, description, yield_amount, yield_unit").eq("owner_id", user_id).execute()
+        res = (
+            supabase.table("recipes")
+            .select("name, yield_amount, yield_unit, category")
+            .eq("owner_id", user_id)
+            .order("name")
+            .execute()
+        )
         if not res.data:
-            return "No recipes found in the database."
+            return "No recipes found."
 
-        output = "**Available Recipes:**\n"
+        output = "**Your recipes:**\n"
         for r in res.data:
-            desc = r['description'] if r['description'] else "No description"
-            yield_amount = r.get('yield_amount') or 1
-            yield_unit = r.get('yield_unit') or 'portion'
-            output += f"- **{r['name']}** (yields {yield_amount} {yield_unit}): {desc}\n"
+            cat = f" [{r['category']}]" if r.get("category") else ""
+            yield_amount = r.get("yield_amount") or 1
+            yield_unit = r.get("yield_unit") or "portion"
+            output += f"- {r['name']}{cat} (yields {yield_amount} {yield_unit})\n"
         return output
     except Exception as e:
         return f"Error listing recipes: {str(e)}"
+
+
+@mcp.tool()
+def get_recipe_details(recipe_name: str, user_id: str) -> str:
+    """
+    Returns the full details of a single recipe: preparation steps, yield, category,
+    and complete ingredient list with quantities.
+    Use this whenever the user asks about a specific recipe (how to make it, ingredients, steps, etc.).
+    """
+    try:
+        recipe_res = (
+            supabase.table("recipes")
+            .select("id, name, description, yield_amount, yield_unit, category")
+            .eq("name", recipe_name)
+            .eq("owner_id", user_id)
+            .execute()
+        )
+        if not recipe_res.data:
+            return f"Recipe '{recipe_name}' not found."
+
+        r = recipe_res.data[0]
+        recipe_id = r["id"]
+
+        header = f"**{r['name']}**"
+        if r.get("category"):
+            header += f" — {r['category']}"
+        header += f"\nYields: {r.get('yield_amount', 1)} {r.get('yield_unit', 'portion')}\n"
+
+        steps = f"\n{r['description']}\n" if r.get("description") else ""
+
+        ing_res = (
+            supabase.table("recipe_ingredients")
+            .select("quantity_used, ingredients(name, unit_of_measure)")
+            .eq("recipe_id", recipe_id)
+            .eq("owner_id", user_id)
+            .execute()
+        )
+
+        ingredients_section = ""
+        if ing_res.data:
+            ingredients_section = "\n**Ingredients:**\n"
+            for item in ing_res.data:
+                ing = item["ingredients"]
+                ingredients_section += f"- {ing['name']}: {float(item['quantity_used'])} {ing['unit_of_measure']}\n"
+
+        return header + steps + ingredients_section
+    except Exception as e:
+        return f"Error fetching recipe details: {str(e)}"
 
 
 @mcp.tool()
