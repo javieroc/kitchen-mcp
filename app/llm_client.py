@@ -305,7 +305,7 @@ class LLMClient:
         tools_used: list[str] = []
 
         try:
-            for _ in range(8):  # max tool-call rounds per turn
+            for _ in range(4):  # max tool-call rounds per turn
                 response = await acompletion(  # type: ignore[misc]
                     model=self.model,
                     messages=messages,
@@ -342,7 +342,7 @@ class LLMClient:
                 for tc in tool_calls:
                     tool_name = tc.function.name
                     try:
-                        args = json.loads(tc.function.arguments or "{}")
+                        args = json.loads(tc.function.arguments or "{}") or {}
                     except json.JSONDecodeError:
                         args = {}
 

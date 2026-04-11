@@ -163,7 +163,7 @@ async def send_chat_message(
             raise HTTPException(status_code=404, detail="Chat not found.")
 
         recent_rows, _ = store.get_messages_page(
-            thread_id=chat_id, user_id=user.user_id, limit=10
+            thread_id=chat_id, user_id=user.user_id, limit=6
         )
         conversation_history = [
             {"role": row["role"], "content": row["content"]} for row in recent_rows
@@ -265,7 +265,7 @@ async def send_voice_message(
             raise HTTPException(status_code=404, detail="Chat not found.")
 
         recent_rows, _ = store.get_messages_page(
-            thread_id=chat_id, user_id=user.user_id, limit=10
+            thread_id=chat_id, user_id=user.user_id, limit=6
         )
         conversation_history = [
             {"role": row["role"], "content": row["content"]} for row in recent_rows
