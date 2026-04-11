@@ -38,6 +38,15 @@ def _extract_recipe_name(prompt: str) -> str | None:
     if trailing:
         return trailing.group(1).strip()
 
+    # "make/cook/bake/prepare <recipe name>" at end of prompt
+    make_match = re.search(
+        r"\b(?:make|cook|bake|prepare)\s+([a-zA-Z][a-zA-Z0-9 \-_]+?)(?:\s*[.!?]|$)",
+        prompt.strip(),
+        flags=re.IGNORECASE,
+    )
+    if make_match:
+        return make_match.group(1).strip()
+
     return None
 
 
@@ -98,10 +107,34 @@ def _extract_substitution_ingredient(prompt: str) -> str | None:
     return None
 
 
+def _is_howto_query(normalized: str) -> bool:
+    """Return True if the prompt is asking how to make/cook something or for recipe steps."""
+    return bool(
+        re.search(
+            r"\b("
+            r"steps?\s+(to|for)\s+(mak|cook|bak|prepar)"
+            r"|how\s+(to|do\s+i)\s+(make|cook|bake|prepare)"
+            r"|tell\s+me\s+how"
+            r"|step\s+by\s+step"
+            r"|instructions?\s+for"
+            r"|give\s+me\s+the\s+steps?"
+            r"|details?\s+(from|for|of).{0,15}recipe"
+            r"|recipe\s+details?"
+            r")\b",
+            normalized,
+        )
+    )
+
+
 llm_client = LLMClient()
 
 
-async def process_chat_prompt(prompt: str, user_id: str, mcp_client: MCPKitchenClient) -> AgentResult:
+async def process_chat_prompt(
+    prompt: str,
+    user_id: str,
+    mcp_client: MCPKitchenClient,
+    conversation_history: list[dict] | None = None,
+) -> AgentResult:
     """Route kitchen prompts to MCP tools or local utilities."""
     normalized = prompt.lower()
     tools_used: list[str] = []
@@ -124,7 +157,7 @@ async def process_chat_prompt(prompt: str, user_id: str, mcp_client: MCPKitchenC
             "update_stock",
             {"name": ingredient, "amount": amount, "mode": mode, "user_id": user_id},
         )
-        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual), tools_used=tools_used)
+        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual, conversation_history), tools_used=tools_used)
 
     # add ingredient to catalog
     if re.search(r"\b(add|create|new)\b.{0,20}\bingredient\b", normalized) and "to recipe" not in normalized and "to the recipe" not in normalized:
@@ -143,7 +176,7 @@ async def process_chat_prompt(prompt: str, user_id: str, mcp_client: MCPKitchenC
             "add_ingredient",
             {"name": ingredient, "unit": unit, "cost": cost, "user_id": user_id},
         )
-        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual), tools_used=tools_used)
+        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual, conversation_history), tools_used=tools_used)
 
     # update ingredient price/cost
     if re.search(r"\b(update|change|set)\b.{0,20}\b(price|cost)\b", normalized):
@@ -159,7 +192,7 @@ async def process_chat_prompt(prompt: str, user_id: str, mcp_client: MCPKitchenC
             "update_ingredient_price",
             {"name": ingredient, "new_cost": new_cost, "user_id": user_id},
         )
-        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual), tools_used=tools_used)
+        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual, conversation_history), tools_used=tools_used)
 
     # delete recipe
     if re.search(r"\b(delete|remove)\b.{0,20}\brecipe\b", normalized):
@@ -174,7 +207,7 @@ async def process_chat_prompt(prompt: str, user_id: str, mcp_client: MCPKitchenC
             "delete_recipe",
             {"recipe_name": recipe, "user_id": user_id},
         )
-        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual), tools_used=tools_used)
+        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual, conversation_history), tools_used=tools_used)
 
     # update recipe metadata
     if re.search(r"\b(update|rename|edit)\b.{0,20}\brecipe\b", normalized):
@@ -198,7 +231,7 @@ async def process_chat_prompt(prompt: str, user_id: str, mcp_client: MCPKitchenC
                 **({"category": cat_match.group(1).strip()} if cat_match else {}),
             },
         )
-        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual), tools_used=tools_used)
+        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual, conversation_history), tools_used=tools_used)
 
     # create recipe
     if re.search(r"\b(create|add|new)\b.{0,20}\brecipe\b", normalized):
@@ -238,7 +271,7 @@ async def process_chat_prompt(prompt: str, user_id: str, mcp_client: MCPKitchenC
                 "user_id": user_id,
             },
         )
-        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual), tools_used=tools_used)
+        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual, conversation_history), tools_used=tools_used)
 
     # add ingredient to recipe
     if re.search(r"\badd\b.{0,30}\bto\b.{0,30}\brecipe\b", normalized) or \
@@ -261,7 +294,7 @@ async def process_chat_prompt(prompt: str, user_id: str, mcp_client: MCPKitchenC
                 "user_id": user_id,
             },
         )
-        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual), tools_used=tools_used)
+        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual, conversation_history), tools_used=tools_used)
 
     # update ingredient quantity in a recipe
     if re.search(r"\b(update|change|set)\b.{0,30}\bquantity\b", normalized) or \
@@ -284,7 +317,7 @@ async def process_chat_prompt(prompt: str, user_id: str, mcp_client: MCPKitchenC
                 "user_id": user_id,
             },
         )
-        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual), tools_used=tools_used)
+        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual, conversation_history), tools_used=tools_used)
 
     # remove ingredient from recipe
     if re.search(r"\b(remove|delete)\b.{0,30}\bfrom\b.{0,30}\brecipe\b", normalized) or \
@@ -305,19 +338,22 @@ async def process_chat_prompt(prompt: str, user_id: str, mcp_client: MCPKitchenC
                 "user_id": user_id,
             },
         )
-        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual), tools_used=tools_used)
+        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual, conversation_history), tools_used=tools_used)
 
     # --- Read operations ---
 
     if "inventory" in normalized or "stock" in normalized:
         tools_used.append("get_inventory_report")
         factual = await mcp_client.call_tool("get_inventory_report", {"user_id": user_id})
-        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual), tools_used=tools_used)
+        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual, conversation_history), tools_used=tools_used)
 
-    if "list recipes" in normalized or ("recipes" in normalized and "available" in normalized):
+    # List recipes: "list recipes", "available recipes", "what recipes", "show me recipes", etc.
+    if re.search(r"\b(list|show|what|all)\b.{0,20}\brecipes?\b", normalized) or \
+       re.search(r"\brecipes?\b.{0,20}\b(list|show|available|all|have|do i have|my)\b", normalized) or \
+       ("recipes" in normalized and "available" in normalized):
         tools_used.append("list_available_recipes")
         factual = await mcp_client.call_tool("list_available_recipes", {"user_id": user_id})
-        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual), tools_used=tools_used)
+        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual, conversation_history), tools_used=tools_used)
 
     if "ingredients for" in normalized:
         recipe = _extract_recipe_name(prompt)
@@ -331,7 +367,14 @@ async def process_chat_prompt(prompt: str, user_id: str, mcp_client: MCPKitchenC
             "get_recipe_ingredients",
             {"recipe_name": recipe, "user_id": user_id},
         )
-        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual), tools_used=tools_used)
+        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual, conversation_history), tools_used=tools_used)
+
+    # Recipe how-to / steps / instructions / details
+    if _is_howto_query(normalized):
+        recipe = _extract_recipe_name(prompt)
+        tools_used.append("list_available_recipes")
+        factual = await mcp_client.call_tool("list_available_recipes", {"user_id": user_id})
+        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual, conversation_history), tools_used=tools_used)
 
     if "cost" in normalized or "price" in normalized:
         recipe = _extract_recipe_name(prompt)
@@ -345,7 +388,7 @@ async def process_chat_prompt(prompt: str, user_id: str, mcp_client: MCPKitchenC
             "calculate_recipe_cost",
             {"recipe_name": recipe, "user_id": user_id},
         )
-        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual), tools_used=tools_used)
+        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual, conversation_history), tools_used=tools_used)
 
     if "scale" in normalized or re.search(r"\b(for|make|want|need)\b.{0,15}\b\d+\b", normalized):
         # Extract target amount + optional unit: "4 portions", "250 g", "6 cookies", "2 loaves"
@@ -367,7 +410,7 @@ async def process_chat_prompt(prompt: str, user_id: str, mcp_client: MCPKitchenC
             "scale_recipe",
             {"recipe_name": recipe, "target_amount": target_amount, "target_unit": target_unit, "user_id": user_id},
         )
-        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual), tools_used=tools_used)
+        return AgentResult(reply=await llm_client.format_kitchen_response(prompt, factual, conversation_history), tools_used=tools_used)
 
     if "substitut" in normalized:
         ingredient = _extract_substitution_ingredient(prompt)
@@ -403,8 +446,8 @@ async def process_chat_prompt(prompt: str, user_id: str, mcp_client: MCPKitchenC
         )
 
     fallback = (
-        "I can help with stock, recipe ingredients, recipe costs, scaling servings, unit conversions, and substitutions. "
+        "I can help with recipes, stock, ingredient costs, scaling servings, unit conversions, and substitutions. "
         "Ask a kitchen question in one of these areas."
     )
-    reply = await llm_client.answer_general_kitchen_question(prompt, fallback)
+    reply = await llm_client.answer_general_kitchen_question(prompt, fallback, conversation_history)
     return AgentResult(reply=reply, tools_used=tools_used)

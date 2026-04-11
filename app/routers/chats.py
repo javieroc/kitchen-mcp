@@ -162,6 +162,13 @@ async def send_chat_message(
         if not thread:
             raise HTTPException(status_code=404, detail="Chat not found.")
 
+        recent_rows, _ = store.get_messages_page(
+            thread_id=chat_id, user_id=user.user_id, limit=10
+        )
+        conversation_history = [
+            {"role": row["role"], "content": row["content"]} for row in recent_rows
+        ]
+
         user_message = store.add_message(
             thread_id=chat_id,
             user_id=user.user_id,
@@ -172,6 +179,7 @@ async def send_chat_message(
             prompt=payload.message,
             user_id=user.user_id,
             mcp_client=mcp_client,
+            conversation_history=conversation_history,
         )
         assistant_message = store.add_message(
             thread_id=chat_id,
@@ -256,6 +264,13 @@ async def send_voice_message(
         if not thread:
             raise HTTPException(status_code=404, detail="Chat not found.")
 
+        recent_rows, _ = store.get_messages_page(
+            thread_id=chat_id, user_id=user.user_id, limit=10
+        )
+        conversation_history = [
+            {"role": row["role"], "content": row["content"]} for row in recent_rows
+        ]
+
         user_message = store.add_message(
             thread_id=chat_id,
             user_id=user.user_id,
@@ -266,6 +281,7 @@ async def send_voice_message(
             prompt=transcription,
             user_id=user.user_id,
             mcp_client=mcp_client,
+            conversation_history=conversation_history,
         )
         assistant_message = store.add_message(
             thread_id=chat_id,

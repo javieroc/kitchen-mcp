@@ -33,6 +33,11 @@
       "key": "msg_cursor",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "recipe_cursor",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -191,6 +196,36 @@
           }
         },
         {
+          "name": "Send voice message",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "audio",
+                  "type": "file",
+                  "src": "",
+                  "description": "Audio file (mp3, wav, webm, ogg, m4a, flac — max 25 MB)"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/chats/{{chat_id}}/messages/voice?tts=false",
+              "host": ["{{base_url}}"],
+              "path": ["chats", "{{chat_id}}", "messages", "voice"],
+              "query": [
+                { "key": "tts", "value": "false", "description": "If true, synthesize the assistant reply to speech and include base64 MP3 in audio_base64" },
+                { "key": "language", "value": "", "description": "Optional BCP-47 language code for STT (e.g. 'en', 'es'). Omit for auto-detection.", "disabled": true }
+              ]
+            },
+            "description": "Accept an audio file, transcribe it via Groq Whisper (STT), run the chat agent, and return the response.\n\n**Flow:**\n1. Audio → Groq Whisper (STT) → transcription text\n2. Transcription → chat agent → assistant reply\n3. Both messages persisted to the chat thread\n4. (Optional, `?tts=true`) Reply → ElevenLabs TTS → base64 MP3 in response\n\n**Supported audio formats:** flac, mp3, mp4, m4a, ogg, wav, webm (max 25 MB).\n\n**Response fields:**\n- `transcription`: the recognised text\n- `thread`: updated thread metadata\n- `user_message` / `assistant_message`: persisted messages\n- `audio_base64`: base64 MP3 (only when `?tts=true`)\n- `audio_mime_type`: `audio/mpeg` (only when `?tts=true`)"
+          }
+        },
+        {
           "name": "Stateless chat",
           "request": {
             "method": "POST",
@@ -233,21 +268,74 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Classic Pancakes\",\n  \"description\": \"Fluffy buttermilk pancakes for two.\",\n  \"ingredients\": [\n    {\n      \"name\": \"All-purpose flour\",\n      \"quantity_used\": 200,\n      \"unit_of_measure\": \"g\",\n      \"cost_per_unit\": 0.002\n    },\n    {\n      \"name\": \"Milk\",\n      \"quantity_used\": 300,\n      \"unit_of_measure\": \"ml\",\n      \"cost_per_unit\": 0.001\n    },\n    {\n      \"name\": \"Egg\",\n      \"quantity_used\": 2,\n      \"unit_of_measure\": \"unit\",\n      \"cost_per_unit\": 0.25\n    }\n  ]\n}"
+              "raw": "{\n  \"name\": \"Classic Pancakes\",\n  \"description\": \"Fluffy buttermilk pancakes for two.\",\n  \"category\": \"Breakfast\",\n  \"image_url\": null,\n  \"yield_amount\": 4,\n  \"yield_unit\": \"portions\",\n  \"ingredients\": [\n    {\n      \"name\": \"All-purpose flour\",\n      \"quantity_used\": 200,\n      \"unit_of_measure\": \"g\",\n      \"cost_per_unit\": 0.002\n    },\n    {\n      \"name\": \"Milk\",\n      \"quantity_used\": 300,\n      \"unit_of_measure\": \"ml\",\n      \"cost_per_unit\": 0.001\n    },\n    {\n      \"name\": \"Egg\",\n      \"quantity_used\": 2,\n      \"unit_of_measure\": \"unit\",\n      \"cost_per_unit\": 0.25\n    }\n  ]\n}"
             },
             "url": "{{base_url}}/recipes",
             "description": "Creates a recipe and links ingredients by name. If an ingredient does not exist in your catalog it is auto-created using unit_of_measure and cost_per_unit. Returns RecipeWithIngredients. Saves recipe.id to {{recipe_id}}.\n\nOmit `ingredients` or pass `[]` to create a recipe with no ingredients yet.\n\nValid unit_of_measure values: g, kg, oz, lb, ml, L, tsp, tbsp, cup, unit"
           }
         },
         {
-          "name": "List recipes",
+          "name": "List recipes (first page)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.next_cursor) { pm.collectionVariables.set('recipe_cursor', json.next_cursor); }",
+                  "console.log('has_more:', json.has_more, '| next_cursor:', json.next_cursor);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
           "request": {
             "method": "GET",
             "header": [
               { "key": "Authorization", "value": "Bearer {{token}}" }
             ],
-            "url": "{{base_url}}/recipes",
-            "description": "Returns all recipes with their full ingredient lists in a single query."
+            "url": {
+              "raw": "{{base_url}}/recipes?limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["recipes"],
+              "query": [
+                { "key": "limit", "value": "20", "description": "Max recipes per page (1–100, default 20)" },
+                { "key": "before", "value": "", "description": "Cursor: created_at of the last recipe from the previous page. Leave empty for the newest recipes.", "disabled": true }
+              ]
+            },
+            "description": "Returns the latest `limit` recipes (newest first) with their full ingredient lists.\n\nResponse fields:\n- `recipes`: array of RecipeWithIngredients\n- `has_more`: true if older recipes exist\n- `next_cursor`: created_at timestamp — pass as `before` to load the next page\n\nTest script auto-saves next_cursor to {{recipe_cursor}}."
+          }
+        },
+        {
+          "name": "List recipes (next page)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.next_cursor) { pm.collectionVariables.set('recipe_cursor', json.next_cursor); }",
+                  "console.log('has_more:', json.has_more, '| next_cursor:', json.next_cursor);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/recipes?limit=20&before={{recipe_cursor}}",
+              "host": ["{{base_url}}"],
+              "path": ["recipes"],
+              "query": [
+                { "key": "limit", "value": "20" },
+                { "key": "before", "value": "{{recipe_cursor}}", "description": "created_at cursor from the previous response's next_cursor" }
+              ]
+            },
+            "description": "Loads the page of recipes older than {{recipe_cursor}}. Keep calling while has_more is true."
           }
         },
         {
@@ -271,10 +359,10 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Classic Pancakes (updated)\",\n  \"description\": \"Even fluffier now.\"\n}"
+              "raw": "{\n  \"name\": \"Classic Pancakes (updated)\",\n  \"description\": \"Even fluffier now.\",\n  \"category\": \"Breakfast\",\n  \"image_url\": null,\n  \"yield_amount\": 6,\n  \"yield_unit\": \"portions\"\n}"
             },
             "url": "{{base_url}}/recipes/{{recipe_id}}",
-            "description": "Updates the recipe name and/or description. Both fields are optional."
+            "description": "Updates one or more recipe fields. All fields are optional: name, description, category, image_url, yield_amount, yield_unit."
           }
         },
         {
@@ -301,7 +389,9 @@
               "script": {
                 "exec": [
                   "var json = pm.response.json();",
-                  "if (json.ingredient_id) { pm.collectionVariables.set('ingredient_id', json.ingredient_id); }"
+                  "if (json.ingredients && json.ingredients.length > 0) {",
+                  "  pm.collectionVariables.set('ingredient_id', json.ingredients[json.ingredients.length - 1].ingredient_id);",
+                  "}"
                 ],
                 "type": "text/javascript"
               }
@@ -318,7 +408,7 @@
               "raw": "{\n  \"ingredient_id\": \"PASTE_INGREDIENT_UUID_HERE\",\n  \"quantity_used\": 200\n}"
             },
             "url": "{{base_url}}/recipes/{{recipe_id}}/ingredients",
-            "description": "Links an existing ingredient to the recipe with a quantity. Saves ingredient_id to {{ingredient_id}}."
+            "description": "Links an existing ingredient to the recipe with a quantity. Returns the updated RecipeWithIngredients. Saves the last ingredient_id to {{ingredient_id}}."
           }
         },
         {
@@ -334,7 +424,7 @@
               "raw": "{\n  \"quantity_used\": 250\n}"
             },
             "url": "{{base_url}}/recipes/{{recipe_id}}/ingredients/{{ingredient_id}}",
-            "description": "Updates the quantity of a specific ingredient in the recipe."
+            "description": "Updates the quantity of a specific ingredient in the recipe. Returns the updated RecipeWithIngredients."
           }
         },
         {
