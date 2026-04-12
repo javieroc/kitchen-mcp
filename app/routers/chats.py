@@ -166,7 +166,9 @@ async def send_chat_message(
             thread_id=chat_id, user_id=user.user_id, limit=6
         )
         conversation_history = [
-            {"role": row["role"], "content": row["content"]} for row in recent_rows
+            {"role": row["role"], "content": row["content"]}
+            for row in recent_rows
+            if row["content"]
         ]
 
         user_message = store.add_message(
@@ -268,7 +270,9 @@ async def send_voice_message(
             thread_id=chat_id, user_id=user.user_id, limit=6
         )
         conversation_history = [
-            {"role": row["role"], "content": row["content"]} for row in recent_rows
+            {"role": row["role"], "content": row["content"]}
+            for row in recent_rows
+            if row["content"]
         ]
 
         user_message = store.add_message(
