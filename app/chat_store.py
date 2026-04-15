@@ -101,6 +101,9 @@ class ChatStore:
         rows.reverse()  # chronological order for the client
         return rows, has_more
 
+    def update_thread_title(self, thread_id: UUID, user_id: str, title: str) -> None:
+        self.client.table("chat_threads").update({"title": title}).eq("id", str(thread_id)).eq("owner_id", user_id).execute()
+
     def add_message(
         self,
         *,

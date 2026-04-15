@@ -171,6 +171,12 @@ async def send_chat_message(
             if row["content"]
         ]
 
+        # Auto-title: set a short title from the first user message if thread has none
+        if not thread.get("title") and not recent_rows:
+            raw = payload.message.strip()
+            auto_title = raw[:60] + ("…" if len(raw) > 60 else "")
+            store.update_thread_title(thread_id=chat_id, user_id=user.user_id, title=auto_title)
+
         user_message = store.add_message(
             thread_id=chat_id,
             user_id=user.user_id,
@@ -274,6 +280,12 @@ async def send_voice_message(
             for row in recent_rows
             if row["content"]
         ]
+
+        # Auto-title: set a short title from the transcription if thread has none
+        if not thread.get("title") and not recent_rows:
+            raw = transcription.strip()
+            auto_title = raw[:60] + ("…" if len(raw) > 60 else "")
+            store.update_thread_title(thread_id=chat_id, user_id=user.user_id, title=auto_title)
 
         user_message = store.add_message(
             thread_id=chat_id,
