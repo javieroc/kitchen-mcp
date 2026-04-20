@@ -11,11 +11,23 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 try:
+    import litellm
     from litellm import acompletion
+    from litellm.exceptions import (
+        ServiceUnavailableError,
+        RateLimitError,
+        APIConnectionError,
+        AuthenticationError,
+    )
 
     HAS_LITELLM = True
 except Exception:
+    litellm = None  # type: ignore[assignment]
     acompletion = None
+    ServiceUnavailableError = Exception  # type: ignore[assignment,misc]
+    RateLimitError = Exception  # type: ignore[assignment,misc]
+    APIConnectionError = Exception  # type: ignore[assignment,misc]
+    AuthenticationError = Exception  # type: ignore[assignment,misc]
     HAS_LITELLM = False
 
 
@@ -272,11 +284,15 @@ KITCHEN_TOOLS: list[dict[str, Any]] = [
 ]
 
 
+# Errors that mean "this provider can't serve right now" — skip to next in chain
+_FALLBACK_ERRORS = (ServiceUnavailableError, RateLimitError, APIConnectionError, AuthenticationError)
+
+
 class LLMClient:
-    """LLM client with tool-calling support for the kitchen agent."""
+    """LLM client with tool-calling support and automatic provider fallback."""
 
     def __init__(self) -> None:
-        self.model = self._resolve_model()
+        self.model_chain = self._build_model_chain()
         self.temperature = float(os.getenv("LLM_TEMPERATURE", "0.2"))
 
     async def run_agent_turn(
@@ -285,99 +301,123 @@ class LLMClient:
         conversation_history: list[dict],
         tool_executor: Callable[[str, dict], Awaitable[str]],
     ) -> tuple[str, list[str]]:
-        """Run a full agent turn with tool calling.
-
-        The LLM receives the system prompt, conversation history, and current message.
-        It decides which tools to call (if any), executes them via tool_executor,
-        and returns a final text reply.
+        """Run a full agent turn, falling back across providers on transient errors.
 
         Returns:
             (reply_text, tools_used)
         """
-        if not HAS_LITELLM or not self._has_provider_credentials():
+        if not HAS_LITELLM or not self.model_chain:
             return "Language model is not configured.", []
 
-        messages: list[dict[str, Any]] = [
+        base_messages: list[dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT},
             *conversation_history,
             {"role": "user", "content": user_prompt},
         ]
         tools_used: list[str] = []
 
-        try:
-            for _ in range(4):  # max tool-call rounds per turn
-                response = await acompletion(  # type: ignore[misc]
-                    model=self.model,
-                    messages=messages,
-                    tools=KITCHEN_TOOLS,
-                    tool_choice="auto",
-                    temperature=self.temperature,
+        last_error: Exception | None = None
+        for model in self.model_chain:
+            try:
+                reply, tools_used = await self._run_with_model(
+                    model, list(base_messages), tool_executor
                 )
+                if model != self.model_chain[0]:
+                    logger.info("Succeeded with fallback model=%s", model)
+                return reply, tools_used
+            except _FALLBACK_ERRORS as exc:
+                logger.warning("Model %s unavailable (%s), trying next fallback", model, exc)
+                last_error = exc
+            except Exception as exc:
+                logger.warning("Model %s failed unexpectedly (%s), trying next fallback", model, exc)
+                last_error = exc
 
-                msg = response.choices[0].message
-                tool_calls = getattr(msg, "tool_calls", None)
+        logger.error("All models in chain failed. Last error: %s", last_error)
+        return "I'm having trouble right now. Please try again later.", tools_used
 
-                # No tool calls → final text answer
-                if not tool_calls:
-                    return (msg.content or "").strip(), tools_used
+    async def _run_with_model(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        tool_executor: Callable[[str, dict], Awaitable[str]],
+    ) -> tuple[str, list[str]]:
+        tools_used: list[str] = []
 
-                # Append the assistant's tool-call message
+        for _ in range(4):  # max tool-call rounds per turn
+            response = await acompletion(  # type: ignore[misc]
+                model=model,
+                messages=messages,
+                tools=KITCHEN_TOOLS,
+                tool_choice="auto",
+                temperature=self.temperature,
+            )
+
+            msg = response.choices[0].message
+            tool_calls = getattr(msg, "tool_calls", None)
+
+            if not tool_calls:
+                return (msg.content or "").strip(), tools_used
+
+            messages.append({
+                "role": "assistant",
+                "content": msg.content or "",
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in tool_calls
+                ],
+            })
+
+            for tc in tool_calls:
+                tool_name = tc.function.name
+                try:
+                    args = json.loads(tc.function.arguments or "{}") or {}
+                except json.JSONDecodeError:
+                    args = {}
+
+                tools_used.append(tool_name)
+                result = await tool_executor(tool_name, args)
+
                 messages.append({
-                    "role": "assistant",
-                    "content": msg.content or "",
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in tool_calls
-                    ],
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result,
                 })
 
-                # Execute each requested tool and feed results back
-                for tc in tool_calls:
-                    tool_name = tc.function.name
-                    try:
-                        args = json.loads(tc.function.arguments or "{}") or {}
-                    except json.JSONDecodeError:
-                        args = {}
-
-                    tools_used.append(tool_name)
-                    result = await tool_executor(tool_name, args)
-
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": result,
-                    })
-
-            return "I had trouble completing that request. Please try again.", tools_used
-
-        except Exception:
-            logger.exception("run_agent_turn failed (model=%s)", self.model)
-            return "I'm having trouble right now. Please try again later.", tools_used
+        return "I had trouble completing that request. Please try again.", tools_used
 
     @staticmethod
-    def _resolve_model() -> str:
-        configured = os.getenv("LLM_MODEL")
-        if configured:
-            return configured
+    def _build_model_chain() -> list[str]:
+        """Build ordered list of available models from configured API keys."""
+        chain: list[str] = []
 
-        legacy = os.getenv("GEMINI_MODEL")
-        if legacy:
-            return legacy if "/" in legacy else f"gemini/{legacy}"
+        def _prefixed(model: str, prefix: str) -> str:
+            return model if "/" in model else f"{prefix}/{model}"
 
-        return "gemini/gemini-2.0-flash"
+        gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        openai_key = os.getenv("OPENAI_API_KEY")
 
-    @staticmethod
-    def _has_provider_credentials() -> bool:
-        return bool(
-            os.getenv("GEMINI_API_KEY")
-            or os.getenv("GOOGLE_API_KEY")
-            or os.getenv("OPENAI_API_KEY")
-            or os.getenv("ANTHROPIC_API_KEY")
-        )
+        if gemini_key:
+            model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+            chain.append(_prefixed(model, "gemini"))
+
+        if anthropic_key:
+            model = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+            chain.append(_prefixed(model, "anthropic"))
+
+        if openai_key:
+            model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            chain.append(_prefixed(model, "openai"))
+
+        if not chain:
+            chain.append("gemini/gemini-2.0-flash")
+
+        logger.info("LLM model chain: %s", chain)
+        return chain
