@@ -18,6 +18,7 @@ try:
         RateLimitError,
         APIConnectionError,
         AuthenticationError,
+        BadRequestError,
     )
 
     HAS_LITELLM = True
@@ -28,6 +29,7 @@ except Exception:
     RateLimitError = Exception  # type: ignore[assignment,misc]
     APIConnectionError = Exception  # type: ignore[assignment,misc]
     AuthenticationError = Exception  # type: ignore[assignment,misc]
+    BadRequestError = Exception  # type: ignore[assignment,misc]
     HAS_LITELLM = False
 
 
@@ -285,7 +287,7 @@ KITCHEN_TOOLS: list[dict[str, Any]] = [
 
 
 # Errors that mean "this provider can't serve right now" — skip to next in chain
-_FALLBACK_ERRORS = (ServiceUnavailableError, RateLimitError, APIConnectionError, AuthenticationError)
+_FALLBACK_ERRORS = (ServiceUnavailableError, RateLimitError, APIConnectionError, AuthenticationError, BadRequestError)
 
 
 class LLMClient:
@@ -415,6 +417,11 @@ class LLMClient:
         if openai_key:
             model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
             chain.append(_prefixed(model, "openai"))
+
+        deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+        if deepseek_key:
+            model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+            chain.append(_prefixed(model, "deepseek"))
 
         if not chain:
             chain.append("gemini/gemini-2.0-flash")
